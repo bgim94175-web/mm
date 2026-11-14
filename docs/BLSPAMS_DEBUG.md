@@ -37,8 +37,39 @@
 - 15분 대기 후 1.5초 간격으로 sr 0~5 발사 → 전부 `body.status=-301`
 - rate limit 이었으면 한두 개는 뚫렸어야 함 → 서버가 구조적으로 거부
 
-### ★ 2026-11-14 결정적 돌파구 ★
-**오픈채팅 신고는 BLSPAMS 가 아님 — HTTP `POST c/fraud/report/chatLogs`.**
+### ★★★ 2026-11-14 완전 해석 ★★★
+
+**APK 26.8.3 dex 분석 (androguard, 내가 직접) 결과:**
+
+- **호스트**: `https://open.kakao.com` (라이브 응답 200 확인)
+- **경로**: `POST /c/fraud/report/chatLogs`
+- **바디 (ChatLogsReportParams, 서브클래스 `Lcom/kakao/talk/abusereport/base/model/ChatLogsReportParams$a` 의 kotlinx-serialization 레지스터로 확정):**
+  ```json
+  {
+    "category": "<enum name>",      // String
+    "linkId": <long>,
+    "chatId": <long>,
+    "chatLogInfos": "<string>"      // ★ JSON-인코드 문자열, 배열 아님!
+  }
+  ```
+- **category 값** (`Lrg61;` enum 12개):
+  `SEXUAL · RIGHT · ILLEGAL_FILMING · FRAUD · SPAM · SUICIDE · PROTECTCHILD · VIOLENT · ILLEGAL · PRIVACY · YOUTH_UNSUITABLE · ETC`
+- **chatLogInfos 포맷** (`Lyud1;->f` + `->j` 가 조립):
+  ```
+  JSON.stringify([{
+    u: <authorId long>,
+    m: { message: <text>, referer: 0, revision: 0 },
+    s: <sendAt int>,
+    t: <type int>,
+    l: <logId long>,
+    scope: 1,
+    threadId: <long|null>   // 선택
+  }])
+  ```
+
+**이전 "모든 바디 거부 b=-500" 원인:** `chatLogs: [...]` (배열) 로 보냈음. 서버는 `chatLogInfos: "[...]"` (문자열) 를 기다림.
+
+### ~~오픈채팅 신고는 BLSPAMS 가 아님~~ (이제 진짜 바디 확정됨)
 
 APK 26.8.3 재확인 결과 (사용자가 넘김):
 - BLSPAMS 는 일반(1:1·단체) 채팅방 전용: `AbuseReportChatroomUseCase → ReportSpamAtChatRoomUseCase → LocoImpl.blSpams`

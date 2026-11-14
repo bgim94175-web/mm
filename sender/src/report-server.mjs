@@ -207,6 +207,16 @@ async function handle(req, res) {
     const r = await queue(function () { return OPEN.fire(String(b.host || ''), b.ctx || b, b.reasons) })
     return send(res, 200, r)
   }
+  if (p === '/report/openchat-fireAll' && req.method === 'POST') {
+    const b = await readBody(req)
+    const r = await queue(function () { return OPEN.fireAll(b.ctx || b) })
+    return send(res, 200, r)
+  }
+  if (p === '/report/openchat-one' && req.method === 'POST') {
+    const b = await readBody(req)
+    const r = await queue(function () { return OPEN.reportOne(b.ctx || b, String(b.category || 'SPAM')) })
+    return send(res, 200, r)
+  }
 
   // 둘러보기 — 봇이 로그인한 방 목록
   if (p === '/report/rooms') {
