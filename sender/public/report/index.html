@@ -41,7 +41,8 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <select id="dt"><option value="tablet">tablet</option><option value="pc">pc</option></select>
     <div class="row"><button class="p" onclick="doLogin()">로그인</button></div>
     <div id="passBox" class="hide">
-      <label>인증번호</label>
+      <pre id="codeBox" class="hide"></pre>
+      <label>인증번호 (폰에 입력한 번호)</label>
       <input id="code" inputmode="numeric">
       <div class="row"><button class="p" onclick="doPass()">확인</button></div>
     </div>
@@ -86,16 +87,19 @@ async function doLogin() {
   save(); $('loginOut').classList.remove('hide'); $('loginOut').textContent = '로그인 중…'
   try {
     const j = await post('/report/login', { email: $('email').value.trim(), password: $('pw').value, deviceType: $('dt').value })
-    $('loginOut').textContent = JSON.stringify(j, null, 1)
+    $('loginOut').textContent = j.message || JSON.stringify(j, null, 1)
     if (j.ok) return enter()
-    if (j.needPasscode) $('passBox').classList.remove('hide')
+    if (j.needPasscode) {
+      $('passBox').classList.remove('hide')
+      if (j.showCode) { $('codeBox').classList.remove('hide'); $('codeBox').textContent = '폰 카카오톡에 입력할 인증번호\n→ ' + j.showCode }
+    }
   } catch (e) { $('loginOut').textContent = '실패: ' + e.message }
 }
 async function doPass() {
   $('loginOut').textContent = '확인 중…'
   try {
     const j = await post('/report/passcode', { code: $('code').value.trim() })
-    $('loginOut').textContent = JSON.stringify(j, null, 1)
+    $('loginOut').textContent = j.message || JSON.stringify(j, null, 1)
     if (j.ok) return enter()
   } catch (e) { $('loginOut').textContent = '실패: ' + e.message }
 }

@@ -7,7 +7,6 @@ const LIB = 'agent-messenger/dist/src/platforms/kakaotalk/auth/kakao-login.js'
 const LIB_REL = '../node_modules/agent-messenger/dist/src/platforms/kakaotalk/auth/kakao-login.js'
 const DATA = join(process.cwd(), 'data', 'report')
 const FILE = join(DATA, 'console-auth.json')
-const DEVICE = 'SM-X710'
 
 let cred = null
 let pending = null
@@ -30,15 +29,6 @@ async function auth() {
   return import(new URL(LIB_REL, import.meta.url).href)
 }
 
-// 라이브러리 버전마다 인자 모양이 달라서 순서대로 시도한다
-async function call(fn, variants) {
-  let last = null
-  for (const v of variants) {
-    try { return await fn(...v) } catch (e) { last = e }
-  }
-  throw last || new Error('호출 실패')
-}
-
 export async function login(email, password, deviceType = 'tablet') {
   if (!email || !password) return { ok: false, message: '아이디·비번 필요' }
   const prev = load()
@@ -47,31 +37,36 @@ export async function login(email, password, deviceType = 'tablet') {
 
   let r
   try {
-    r = await call(am.attemptLogin, [
-      [email, password, duuid, deviceType, false, null, DEVICE, DEVICE],
-      [email, password, duuid, deviceType],
-      [{ email, password, deviceUuid: duuid, deviceType, deviceName: DEVICE, modelName: DEVICE }],
-    ])
+    r = await am.attemptLogin(email, password, duuid, deviceType === 'pc' ? 'pc' : 'tablet', false, null)
   } catch (e) { return { ok: false, message: String(e.message || e) } }
 
-  const status = r && r.status
-  if (status === 0 && r.oauthToken) {
-    save({ oauthToken: r.oauthToken, userId: String(r.userId || ''), duuid, email, deviceType })
-    return { ok: true, status, userId: String(r.userId || '') }
+  if (r && r.authenticated && r.credentials) {
+    const uid = String(r.user_id || r.account_id || r.credentials.user_id || '')
+    save({
+      oauthToken: r.credentials.access_token,
+      refreshToken: r.credentials.refresh_token || '',
+      userId: uid, duuid, email, deviceType,
+    })
+    return { ok: true, userId: uid }
   }
-  if (status === -100) {
+
+  if (r && r.next_action === 'provide_passcode') {
     pending = { email, password, deviceType, duuid }
-    let msg = '인증번호 요청됨'
+    let msg = '새 기기 등록이 필요합니다'
+    let showCode = ''
     try {
-      const pr = await call(am.requestPasscode, [
-        [email, password, duuid, DEVICE, DEVICE],
-        [email, password, duuid],
-      ])
-      if (pr && pr.message) msg = pr.message
+      const pr = await am.requestPasscode(email, password, duuid)
+      if (pr && pr.passcode) {
+        showCode = String(pr.passcode)
+        msg = `폰 카카오톡에 뜨는 화면에서 이 인증번호를 입력하세요: ${showCode}\n입력한 뒤 아래 "확인"을 누르세요.`
+      } else if (pr && pr.message) {
+        msg = pr.message
+      }
     } catch (e) { msg = String(e.message || e) }
-    return { ok: false, needPasscode: true, status, message: msg }
+    return { ok: false, needPasscode: true, showCode, message: msg }
   }
-  return { ok: false, status, message: (r && r.message) || '로그인 실패' }
+
+  return { ok: false, message: (r && r.message) || '로그인 실패' }
 }
 
 export async function passcode(code) {
@@ -79,12 +74,9 @@ export async function passcode(code) {
   const { email, password, deviceType, duuid } = pending
   const am = await auth()
   try {
-    const rg = await call(am.registerDevice, [
-      [email, password, code, duuid, DEVICE, DEVICE],
-      [email, password, code, duuid],
-    ])
-    if (rg && rg.status !== undefined && rg.status !== 0) {
-      return { ok: false, status: rg.status, message: rg.message || '기기 등록 실패' }
+    const rg = await am.registerDevice(email, password, String(code || ''), duuid)
+    if (rg && rg.error) {
+      return { ok: false, message: rg.message || '기기 등록 실패' }
     }
   } catch (e) { return { ok: false, message: String(e.message || e) } }
   pending = null

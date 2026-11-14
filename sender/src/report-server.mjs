@@ -14,6 +14,9 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
 }
 
+process.on('unhandledRejection', (e) => console.error('unhandledRejection', e))
+process.on('uncaughtException', (e) => console.error('uncaughtException', e))
+
 let busy = false
 
 function keyOf() {
