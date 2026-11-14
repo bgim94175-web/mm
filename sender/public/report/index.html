@@ -54,7 +54,7 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
 <div id="app" class="hide">
   <div class="card">
     <div class="me" id="me"></div>
-    <div class="row"><button onclick="doLogout()">로그아웃</button><button onclick="refreshMe()">새로고침</button></div>
+    <div class="row"><button onclick="doLogout()">로그아웃</button><button onclick="refreshMe()">새로고침</button><button onclick="locoReconnect()">LOCO 재연결</button></div>
   </div>
 
   <label>대상 userId</label>
@@ -92,14 +92,26 @@ const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value,
 const q = () => '?k=' + encodeURIComponent($('k').value)
 
 async function post(path, body) {
-  const r = await fetch(path + q(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-  return r.json()
+  let r
+  try { r = await fetch(path + q(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) }
+  catch (e) { throw new Error('네트워크 오류: ' + (e && e.message ? e.message : e)) }
+  const text = await r.text()
+  if (!text) throw new Error('서버가 빈 응답 (HTTP ' + r.status + ')')
+  try { return JSON.parse(text) }
+  catch (e) { throw new Error('응답이 JSON 아님 (HTTP ' + r.status + '): ' + text.slice(0, 120)) }
+}
+function fmtLogin(j) {
+  const base = j.message || (j.ok ? '성공' : '실패')
+  const loco = j.loco === 'O' ? ' · LOCO O' : j.loco === 'X' ? ' · LOCO X (' + (j.locoError || '사유 없음') + ')' : ''
+  return base + loco
 }
 async function doLogin() {
   save(); $('loginOut').classList.remove('hide'); $('loginOut').textContent = '로그인 중…'
+  const email = $('email').value.trim(), pw = $('pw').value
+  if (!email || !pw) { $('loginOut').textContent = '아이디·비번 필요'; return }
   try {
-    const j = await post('/report/login', { email: $('email').value.trim(), password: $('pw').value, deviceType: $('dt').value })
-    $('loginOut').textContent = j.message || JSON.stringify(j, null, 1)
+    const j = await post('/report/login', { email, password: pw, deviceType: $('dt').value })
+    $('loginOut').textContent = fmtLogin(j)
     if (j.ok) return enter()
     if (j.needPasscode) {
       $('passBox').classList.remove('hide')
@@ -110,18 +122,29 @@ async function doLogin() {
 async function doPass() {
   $('loginOut').textContent = '확인 중…'
   try {
-    const j = await post('/report/passcode', { code: $('code').value.trim(), password: $('pw').value })
-    $('loginOut').textContent = j.message || JSON.stringify(j, null, 1)
+    const j = await post('/report/passcode', { code: $('code').value.trim(), password: $('pw').value, deviceType: $('dt').value })
+    $('loginOut').textContent = fmtLogin(j)
     if (j.ok) return enter()
   } catch (e) { $('loginOut').textContent = '실패: ' + e.message }
 }
 function enter() { $('login').classList.add('hide'); $('app').classList.remove('hide'); refreshMe() }
 async function refreshMe() {
   try {
-    const j = await (await fetch('/report/me' + q())).json()
+    const r = await fetch('/report/me' + q())
+    const text = await r.text()
+    const j = JSON.parse(text)
     if (!j.loggedIn) { $('login').classList.remove('hide'); $('app').classList.add('hide'); return }
-    $('me').textContent = '로그인됨 · ' + j.email + ' · uid ' + j.userId
-  } catch {}
+    const loco = j.loco === 'O' ? '🟢' : '🔴' + (j.locoError ? ' ' + j.locoError : '')
+    $('me').textContent = '로그인됨 · ' + j.email + ' · uid ' + j.userId + ' · LOCO ' + loco
+  } catch (e) { $('me').textContent = '상태 조회 실패: ' + e.message }
+}
+async function locoReconnect() {
+  $('me').textContent = 'LOCO 재연결 중…'
+  try {
+    const j = await post('/report/loco-reconnect', { deviceType: $('dt').value })
+    if (!j.ok) $('me').textContent = 'LOCO 재연결 실패: ' + (j.message || '사유 없음')
+    else refreshMe()
+  } catch (e) { $('me').textContent = 'LOCO 재연결 실패: ' + e.message }
 }
 async function doLogout() {
   await post('/report/logout', {})

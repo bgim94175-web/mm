@@ -45,6 +45,7 @@ export async function login(email, password, deviceType = 'tablet') {
 
   if (r && r.authenticated && r.credentials) {
     const uid = String(r.user_id || r.account_id || r.credentials.user_id || '')
+    if (!uid) return { ok: false, message: '로그인 성공했지만 userId 가 비어 있음 (서버 응답 이상)' }
     save({
       oauthToken: r.credentials.access_token,
       refreshToken: r.credentials.refresh_token || '',

@@ -72,19 +72,41 @@ async function handle(req, res) {
   if (!p.startsWith('/report/')) return send(res, 404, { ok: false })
   if (keyOf() && k !== keyOf()) return send(res, 401, { ok: false, error: 'key' })
 
-  if (p === '/report/me') return send(res, 200, AUTH.me())
+  if (p === '/report/me') {
+    const m = AUTH.me()
+    m.loco = LOCO.ready() ? 'O' : 'X'
+    if (!LOCO.ready() && LOCO.error()) m.locoError = LOCO.error()
+    return send(res, 200, m)
+  }
   if (p === '/report/status') {
     const s = RH.status()
     s.loco = LOCO.ready() ? 'O' : 'X'
+    if (!LOCO.ready() && LOCO.error()) s.locoError = LOCO.error()
     return send(res, 200, s)
+  }
+
+  if (p === '/report/loco-reconnect' && req.method === 'POST') {
+    const b = await readBody(req)
+    try {
+      await LOCO.connect(b.deviceType)
+      return send(res, 200, { ok: true, loco: 'O' })
+    } catch (e) {
+      return send(res, 200, { ok: false, message: String(e && e.message ? e.message : e) })
+    }
   }
 
   if (p === '/report/login' && req.method === 'POST') {
     const b = await readBody(req)
     const r = await AUTH.login(String(b.email || ''), String(b.password || ''), b.deviceType === 'pc' ? 'pc' : 'tablet')
     if (r.ok) {
-      try { await LOCO.connect(String(b.email || ''), String(b.password || ''), b.deviceType) }
-      catch (e) { console.log('loco 실패: ' + (e && e.message)) }
+      try {
+        await LOCO.connect(b.deviceType)
+        r.loco = 'O'
+      } catch (e) {
+        r.loco = 'X'
+        r.locoError = String(e && e.message ? e.message : e)
+        console.log('loco 실패: ' + r.locoError)
+      }
     }
     return send(res, 200, r)
   }
@@ -92,9 +114,14 @@ async function handle(req, res) {
     const b = await readBody(req)
     const r = await AUTH.passcode(String(b.code || ''))
     if (r.ok) {
-      const c = AUTH.get()
-      try { await LOCO.connect(c && c.email, String(b.password || ''), c && c.deviceType) }
-      catch (e) { console.log('loco 재연결 실패: ' + (e && e.message)) }
+      try {
+        await LOCO.connect(b.deviceType)
+        r.loco = 'O'
+      } catch (e) {
+        r.loco = 'X'
+        r.locoError = String(e && e.message ? e.message : e)
+        console.log('loco 재연결 실패: ' + r.locoError)
+      }
     }
     return send(res, 200, r)
   }
@@ -102,6 +129,12 @@ async function handle(req, res) {
     AUTH.clear()
     LOCO.close()
     return send(res, 200, { ok: true })
+  }
+
+  // 메시지 신고 전에 LOCO 가 끊어져 있으면 한 번 재연결 시도
+  if ((p === '/report/msg' || p === '/report/msgfire') && !LOCO.ready()) {
+    try { await LOCO.connect() }
+    catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message ? e.message : e) }) }
   }
 
   if (p === '/report/host' || p === '/report/slugs' || p === '/report/fire') {
