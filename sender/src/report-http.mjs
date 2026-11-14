@@ -7,8 +7,8 @@ export const SLUGS = [
   'etc', 'suicide', 'fraud', 'right_infringement', 'illegal_filming', 'youth_unsuitable',
 ]
 const GAP = 1500
-const sleep = (ms) =&gt; new Promise((r) =&gt; setTimeout(r, ms))
-const L = (s) =&gt; console.log(s)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const L = (s) => console.log(s)
 
 function headersOf() {
   const c = getCred()
@@ -26,7 +26,7 @@ async function hit(host, slug, body) {
   })
   let j = null
   try { j = await r.json() } catch {}
-  return { code: r.status, st: j &amp;&amp; j.status, url: j &amp;&amp; j.url }
+  return { code: r.status, st: j && j.status, url: j && j.url }
 }
 
 async function pickHost(userId) {
@@ -44,10 +44,10 @@ export function status() {
   const c = getCred()
   return {
     ok: true,
-    cred: c &amp;&amp; c.oauthToken ? 'O' : 'X',
+    cred: c && c.oauthToken ? 'O' : 'X',
     slugs: SLUGS.length,
     hosts: HOSTS,
-    text: `cred ${c &amp;&amp; c.oauthToken ? 'O' : 'X'} · 슬러그 ${SLUGS.length}개`,
+    text: `cred ${c && c.oauthToken ? 'O' : 'X'} · 슬러그 ${SLUGS.length}개`,
   }
 }
 
@@ -65,8 +65,8 @@ export async function probeSlugs(userId) {
     L(`report slug ${slug} → ${r.code}`)
     await sleep(GAP)
   }
-  const ok = rows.filter((x) =&gt; x.endsWith(':200')).length
-  return { ok: ok &gt; 0, count: ok, rows, text: `접수 ${ok}/${SLUGS.length}\n${rows.join(' · ')}` }
+  const ok = rows.filter((x) => x.endsWith(':200')).length
+  return { ok: ok > 0, count: ok, rows, text: `접수 ${ok}/${SLUGS.length}\n${rows.join(' · ')}` }
 }
 
 export async function fire(userId, content) {
@@ -83,6 +83,6 @@ export async function fire(userId, content) {
     L(`report fire ${slug} uid ${userId} → ${r.code}`)
     await sleep(GAP)
   }
-  const ok = rows.filter((x) =&gt; x.endsWith(':200')).length
-  return { ok: ok &gt; 0, count: ok, rows, text: `접수 ${ok}/${SLUGS.length}\n${rows.join(' · ')}` }
+  const ok = rows.filter((x) => x.endsWith(':200')).length
+  return { ok: ok > 0, count: ok, rows, text: `접수 ${ok}/${SLUGS.length}\n${rows.join(' · ')}` }
 }

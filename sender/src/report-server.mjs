@@ -30,7 +30,7 @@ function readBody(req) {
     let b = ''
     req.on('data', function (c) {
       b += c
-      if (b.length &gt; 1e6) req.destroy()
+      if (b.length > 1e6) req.destroy()
     })
     req.on('end', function () {
       try { resolve(JSON.parse(b || '{}')) } catch (e) { resolve({}) }
@@ -59,21 +59,21 @@ async function handle(req, res) {
   if (p === '/report/health') return send(res, 200, { ok: true })
 
   if (!p.startsWith('/report/')) return send(res, 404, { ok: false })
-  if (keyOf() &amp;&amp; k !== keyOf()) return send(res, 401, { ok: false, error: 'key' })
+  if (keyOf() && k !== keyOf()) return send(res, 401, { ok: false, error: 'key' })
 
   if (p === '/report/me') return send(res, 200, AUTH.me())
   if (p === '/report/status') return send(res, 200, RH.status())
 
-  if (p === '/report/login' &amp;&amp; req.method === 'POST') {
+  if (p === '/report/login' && req.method === 'POST') {
     const b = await readBody(req)
     const r = await AUTH.login(String(b.email || ''), String(b.password || ''), b.deviceType === 'pc' ? 'pc' : 'tablet')
     return send(res, 200, r)
   }
-  if (p === '/report/passcode' &amp;&amp; req.method === 'POST') {
+  if (p === '/report/passcode' && req.method === 'POST') {
     const b = await readBody(req)
     return send(res, 200, await AUTH.passcode(String(b.code || '')))
   }
-  if (p === '/report/logout' &amp;&amp; req.method === 'POST') {
+  if (p === '/report/logout' && req.method === 'POST') {
     AUTH.clear()
     return send(res, 200, { ok: true })
   }
@@ -99,7 +99,7 @@ async function handle(req, res) {
 
 const server = createServer(function (req, res) {
   handle(req, res).catch(function (e) {
-    send(res, 500, { ok: false, error: String(e &amp;&amp; e.message ? e.message : e) })
+    send(res, 500, { ok: false, error: String(e && e.message ? e.message : e) })
   })
 })
 

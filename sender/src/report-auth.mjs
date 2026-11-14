@@ -22,7 +22,7 @@ function save(c) {
   writeFileSync(FILE, JSON.stringify(c))
   cred = c
 }
-export const get = () =&gt; load()
+export const get = () => load()
 export function clear() { cred = null; pending = null; try { writeFileSync(FILE, '{}') } catch {} }
 
 async function auth() {
@@ -42,7 +42,7 @@ async function call(fn, variants) {
 export async function login(email, password, deviceType = 'tablet') {
   if (!email || !password) return { ok: false, message: '아이디·비번 필요' }
   const prev = load()
-  const duuid = (prev &amp;&amp; prev.duuid) || randomUUID().replace(/-/g, '')
+  const duuid = (prev && prev.duuid) || randomUUID().replace(/-/g, '')
   const am = await auth()
 
   let r
@@ -54,8 +54,8 @@ export async function login(email, password, deviceType = 'tablet') {
     ])
   } catch (e) { return { ok: false, message: String(e.message || e) } }
 
-  const status = r &amp;&amp; r.status
-  if (status === 0 &amp;&amp; r.oauthToken) {
+  const status = r && r.status
+  if (status === 0 && r.oauthToken) {
     save({ oauthToken: r.oauthToken, userId: String(r.userId || ''), duuid, email, deviceType })
     return { ok: true, status, userId: String(r.userId || '') }
   }
@@ -67,11 +67,11 @@ export async function login(email, password, deviceType = 'tablet') {
         [email, password, duuid, DEVICE, DEVICE],
         [email, password, duuid],
       ])
-      if (pr &amp;&amp; pr.message) msg = pr.message
+      if (pr && pr.message) msg = pr.message
     } catch (e) { msg = String(e.message || e) }
     return { ok: false, needPasscode: true, status, message: msg }
   }
-  return { ok: false, status, message: (r &amp;&amp; r.message) || '로그인 실패' }
+  return { ok: false, status, message: (r && r.message) || '로그인 실패' }
 }
 
 export async function passcode(code) {
@@ -83,7 +83,7 @@ export async function passcode(code) {
       [email, password, code, duuid, DEVICE, DEVICE],
       [email, password, code, duuid],
     ])
-    if (rg &amp;&amp; rg.status !== undefined &amp;&amp; rg.status !== 0) {
+    if (rg && rg.status !== undefined && rg.status !== 0) {
       return { ok: false, status: rg.status, message: rg.message || '기기 등록 실패' }
     }
   } catch (e) { return { ok: false, message: String(e.message || e) } }
