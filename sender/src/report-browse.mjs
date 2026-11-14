@@ -150,3 +150,48 @@ export async function roomInfo(chatId) {
     return { ok: false, text: 'CHATINFO 실패: ' + (e && e.message ? e.message : e) }
   }
 }
+
+// 방의 멤버 한 명의 오픈프로필 링크. MEMBER 로 pli 받고 INFOLINK 로 lu 받는다.
+// ptp == 16 (오픈프로필) 인 멤버만 pli 를 갖는다. 그렇지 않으면 링크 없음.
+export async function memberProfile(chatId, userId) {
+  if (!ready()) return { ok: false, text: 'LOCO 세션 없음' }
+  if (!chatId || !userId) return { ok: false, text: 'chatId · userId 필요' }
+  const L = await longOf()
+  const cid = L.fromString(String(chatId))
+  const uid = L.fromString(String(userId))
+  const trace = []
+
+  let member = null
+  try {
+    const r = await send('MEMBER', { chatId: cid, memberIds: [uid] })
+    trace.push('MEMBER st=' + (r && r.statusCode))
+    const members = r && r.body && Array.isArray(r.body.members) ? r.body.members : []
+    member = members.find((m) => toIdString(m.userId) === String(userId)) || members[0] || null
+  } catch (e) {
+    trace.push('MEMBER ERR ' + (e && e.message ? e.message : e))
+    return { ok: false, trace, text: trace.join(' · ') }
+  }
+  if (!member) return { ok: false, trace, text: '멤버 못 찾음 · ' + trace.join(' · ') }
+
+  const nick = typeof member.nickName === 'string' ? member.nickName : ''
+  const ptp = Number(member.ptp)
+  const pliStr = toIdString(member.pli)
+  trace.push('ptp=' + ptp + ' pli=' + (pliStr || '-'))
+
+  if (!pliStr || pliStr === '0') {
+    return { ok: true, nick, ptp, url: null, trace, text: '오픈프로필 없음(일반 프로필)' }
+  }
+
+  try {
+    const r = await send('INFOLINK', { lis: [L.fromString(pliStr)] })
+    trace.push('INFOLINK st=' + (r && r.statusCode))
+    const ols = r && r.body && Array.isArray(r.body.ols) ? r.body.ols : []
+    const ol = ols[0]
+    const url = ol && typeof ol.lu === 'string' ? ol.lu : null
+    const linkName = ol && typeof ol.ln === 'string' ? ol.ln : ''
+    return { ok: true, nick, ptp, url, linkName, trace }
+  } catch (e) {
+    trace.push('INFOLINK ERR ' + (e && e.message ? e.message : e))
+    return { ok: false, nick, ptp, trace, text: trace.join(' · ') }
+  }
+}

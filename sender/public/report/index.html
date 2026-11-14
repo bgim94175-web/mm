@@ -71,6 +71,7 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
 
   <label>대상 userId</label>
   <input id="uid" inputmode="numeric" placeholder="숫자만 — 메시지 클릭 시 자동">
+  <div id="profBox" class="me hide" style="margin-top:6px"></div>
   <label>주입할 문장 (선택)</label>
   <input id="txt" placeholder="비우면 기본 문장">
 
@@ -236,9 +237,21 @@ async function loadMsgs(chatId) {
     }).join('')
   } catch (e) { box.innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
 }
-function pickMsg(chatId, logId, authorId) {
+async function pickMsg(chatId, logId, authorId) {
   $('c').value = chatId; $('l').value = logId; $('uid').value = authorId; save()
-  $('out').textContent = '자동 채움 완료 → c=' + chatId + ' · l=' + logId + ' · uid=' + authorId + '\n이제 [메서드 찾기] 를 눌러.'
+  $('out').textContent = '자동 채움 완료 → c=' + chatId + ' · l=' + logId + ' · uid=' + authorId + '\n오픈프로필 확인 중…'
+  const pb = $('profBox'); pb.classList.remove('hide'); pb.textContent = '오픈프로필 조회 중…'
+  try {
+    const r = await fetch('/report/member-link?c=' + encodeURIComponent(chatId) + '&uid=' + encodeURIComponent(authorId) + '&k=' + encodeURIComponent($('k').value))
+    const j = await r.json()
+    if (!j.ok) { pb.textContent = '오픈프로필: ' + esc(j.text || '실패'); return }
+    if (j.url) {
+      pb.innerHTML = '오픈프로필 · ' + esc(j.nick || '이름없음') + ' · <a href="' + esc(j.url) + '" target="_blank" style="color:#9cf">' + esc(j.url) + '</a> <button onclick="navigator.clipboard.writeText(\'' + j.url + '\')" style="padding:4px 8px;font-size:11px;margin-left:6px">복사</button>'
+    } else {
+      pb.textContent = '오픈프로필: ' + (j.text || '없음') + ' (닉 ' + (j.nick || '-') + ')'
+    }
+    $('out').textContent = '자동 채움 완료 → c=' + chatId + ' · l=' + logId + ' · uid=' + authorId + '\n이제 [메서드 찾기] 를 눌러.'
+  } catch (e) { pb.textContent = '오픈프로필 실패: ' + e.message }
 }
 async function raw() {
   save()

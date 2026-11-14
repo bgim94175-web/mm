@@ -194,6 +194,19 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
+  // 멤버 한 명의 오픈프로필 링크 (MEMBER → pli → INFOLINK → lu)
+  if (p === '/report/member-link') {
+    const c = String(u.searchParams.get('c') || '')
+    const uid = String(u.searchParams.get('uid') || '')
+    if (!c || !uid) return send(res, 400, { ok: false, error: 'c/uid' })
+    if (!LOCO.ready()) {
+      try { await LOCO.connect() }
+      catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message ? e.message : e) }) }
+    }
+    const r = await queue(function () { return BROWSE.memberProfile(c, uid) })
+    return send(res, 200, r)
+  }
+
   send(res, 404, { ok: false })
 }
 
