@@ -164,8 +164,22 @@ async function refreshMe() {
   try {
     const r = await fetch('/report/me' + q())
     const text = await r.text()
-    const j = JSON.parse(text)
-    if (!j.loggedIn) { $('login').classList.remove('hide'); $('app').classList.add('hide'); return }
+    let j
+    try { j = JSON.parse(text) } catch (e) { $('me').textContent = '응답 JSON 아님: ' + text.slice(0, 120); return }
+    // API 키 틀림 — 로그인 폼 보여주지 말고 명확히 표시
+    if (r.status === 401 || (j.ok === false && j.error === 'key')) {
+      $('login').classList.remove('hide'); $('app').classList.add('hide')
+      $('loginOut').classList.remove('hide')
+      $('loginOut').textContent = 'API 키 틀림 — Render 의 SENDER_REPORT_API_KEY 와 맞춰야 함'
+      return
+    }
+    if (!j.loggedIn) {
+      // 토큰 없음 — 로그인 필요
+      $('login').classList.remove('hide'); $('app').classList.add('hide')
+      return
+    }
+    // 토큰 있음 — 앱 화면으로
+    $('login').classList.add('hide'); $('app').classList.remove('hide')
     const loco = j.loco === 'O' ? '🟢' : '🔴' + (j.locoError ? ' ' + j.locoError : '')
     const db = j.dbBackend === 'pg' ? '🐘 Neon' : '💾 file'
     $('me').textContent = '로그인됨 · ' + j.email + ' · uid ' + j.userId + ' · LOCO ' + loco + ' · ' + db
