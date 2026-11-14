@@ -332,10 +332,11 @@ async function uVerdict() {
       lines.push('')
     }
   }
-  lines.push('※ 진짜 판정은 카카오톡 앱 → 더보기 → 설정 → 개인/보안 → 신고 내역에서')
-  lines.push('   (a)(b)(c) 세 건이 어떤 닉네임으로 찍히는지 확인.')
-  lines.push('   • 셋 다 다른 닉 → 서버가 u 를 그대로 신뢰')
-  lines.push('   • 셋 다 같은 닉(=작성자) → 서버가 l 로 조회해 u 무시')
+  lines.push('※ 판정 — 위 status 값만 보면 됨:')
+  lines.push('   • 셋 다 status=0 접수 → u 를 그대로 신뢰 (u·l 조합을 새 신고로 봄)')
+  lines.push('   • (a) 접수, (b)(c) 중복/거부 → l 로 판정, u 는 무시')
+  lines.push('   • (c) 에서만 오류 → l 은 통과시키되 u 유효성도 함께 검증')
+  lines.push('   (앱에는 신고자용 내역 화면이 없어서 응답으로만 가름)')
   $('out').textContent = lines.join('\n')
 }
 async function ocFireAll() {
