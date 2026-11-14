@@ -99,12 +99,16 @@ async function hit(body, { timeoutMs = 4000, host = HOST } = {}) {
     const text = await r.text()
     let j = null
     try { j = JSON.parse(text) } catch (e) {}
+    // 응답 헤더 전부 수집 — Location / X-Report-Id / Set-Cookie 등 바디엔 없는 추적 ID 를 찾는 목적
+    const headers = {}
+    try { for (const [k, v] of r.headers) headers[k] = v } catch (e) {}
     return {
       httpCode: r.status,
       status: j && typeof j.status === 'number' ? j.status : null,
       body: j,
       text: !j ? text.slice(0, 200) : null,
       sent: payload.slice(0, 400),  // 디버그: 실제 보낸 body 앞 400자
+      headers,
     }
   } catch (e) {
     return { httpCode: 0, err: String(e && e.message ? e.message : e) }
@@ -120,7 +124,7 @@ export async function reportOne(ctx, category) {
   const r = await hit(body)
   const ok = r.httpCode === 200 && r.status === 0
   return {
-    ok, category, sent: r.sent, http: r.httpCode, status: r.status, respBody: r.body, text: r.text,
+    ok, category, sent: r.sent, http: r.httpCode, status: r.status, respBody: r.body, respHeaders: r.headers, text: r.text,
     msg: (ok ? '★ 접수' : '실패') + ' category=' + category + ' http=' + r.httpCode + ' status=' + r.status + (r.err ? ' err=' + r.err : ''),
   }
 }

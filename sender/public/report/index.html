@@ -337,6 +337,15 @@ async function uVerdict() {
       } else if (j.text) {
         lines.push('  respText=' + String(j.text).slice(0, 240))
       }
+      // respHeaders — 바디엔 없어도 Location / X-Report-Id / Set-Cookie 에 추적 ID 숨어있을 수 있음
+      const rh = j.respHeaders
+      if (rh && typeof rh === 'object') {
+        const skip = new Set(['content-length','content-type','date','server','connection','cache-control','pragma','expires','vary','content-encoding','strict-transport-security','x-content-type-options','x-frame-options','x-xss-protection','accept-ranges','alt-svc','keep-alive','transfer-encoding'])
+        const picked = {}
+        for (const k of Object.keys(rh)) if (!skip.has(k.toLowerCase())) picked[k] = rh[k]
+        const pk = Object.keys(picked)
+        lines.push('  respHeaders (관심): ' + (pk.length ? JSON.stringify(picked) : '(없음 — 공통 헤더뿐)'))
+      }
       lines.push('  sent=' + String(j.sent || '').slice(0, 240))
       lines.push('')
     } catch (e) {
