@@ -70,15 +70,24 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <button class="p" onclick="go('fire')">프로필 발사</button>
   </div>
 
-  <h2>메시지 신고 (BLSPAMS)</h2>
+  <h2>메시지 신고</h2>
   <label>방 번호 c</label>
   <input id="c" inputmode="numeric" placeholder="숫자만">
   <label>로그 번호 l (쉼표로 여러 개)</label>
   <input id="l" inputmode="numeric" placeholder="예: 123,456">
+  <label>메서드 (비우면 발사 때 BLSPAMS, 시험은 후보 전부)</label>
+  <input id="mth" placeholder="BLSPAMS · LBLSPAMS · OREPORT · REPORT ...">
   <div class="g">
-    <button onclick="go('msg')">스팸 시험</button>
+    <button onclick="go('msg')">메서드 찾기</button>
     <button class="p" onclick="go('msgfire')">메시지 발사</button>
   </div>
+
+  <h2>raw LOCO (운영자 전용)</h2>
+  <label>method</label>
+  <input id="rawM" placeholder="PING · CHATINFO · WRITE ...">
+  <label>body (JSON — __long:["chatId","logId"] 로 Long 감싸기)</label>
+  <input id="rawB" placeholder='{"__long":["chatId"],"chatId":"123"}'>
+  <div class="row"><button onclick="raw()">raw 전송</button></div>
 
   <pre id="out">대기</pre>
   <div class="row"><button onclick="share()">결과 공유</button><button onclick="copy()">복사</button></div>
@@ -88,7 +97,8 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
 const $ = (id) => document.getElementById(id)
 const st = JSON.parse(localStorage.getItem('rp5') || '{}')
 $('k').value = st.k || ''; $('email').value = st.email || ''; $('uid').value = st.uid || ''; $('txt').value = st.txt || ''; $('c').value = st.c || ''; $('l').value = st.l || ''
-const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value }))
+$('mth').value = st.mth || ''; $('rawM').value = st.rawM || ''; $('rawB').value = st.rawB || ''
+const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value }))
 const q = () => '?k=' + encodeURIComponent($('k').value)
 
 async function post(path, body) {
@@ -160,6 +170,7 @@ async function go(what) {
   if (what === 'msg' || what === 'msgfire') {
     if (!$('c').value.trim() || !$('l').value.trim()) { $('out').textContent = '방·로그 번호 필요'; return }
     p.set('c', $('c').value.trim()); p.set('l', $('l').value.trim())
+    if (what === 'msgfire' && $('mth').value.trim()) p.set('method', $('mth').value.trim())
   }
   const t0 = Date.now()
   $('out').textContent = '요청 중…'
@@ -170,6 +181,22 @@ async function go(what) {
     $('out').textContent = JSON.stringify(await r.json(), null, 1)
   } catch (e) { $('out').textContent = '실패: ' + e.message }
   finally { clearInterval(tick); lock(false) }
+}
+async function raw() {
+  save()
+  const method = $('rawM').value.trim()
+  if (!method) { $('out').textContent = 'method 필요'; return }
+  let body = {}
+  const bt = $('rawB').value.trim()
+  if (bt) {
+    try { body = JSON.parse(bt) }
+    catch (e) { $('out').textContent = 'body JSON 아님: ' + e.message; return }
+  }
+  $('out').textContent = '요청 중…'
+  try {
+    const j = await post('/report/raw', { method, body })
+    $('out').textContent = JSON.stringify(j, null, 1)
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
 }
 function share() {
   const t = $('out').textContent

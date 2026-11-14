@@ -154,13 +154,21 @@ async function handle(req, res) {
     const l = String(u.searchParams.get('l') || '')
     const t = String(u.searchParams.get('uid') || '')
     const text = String(u.searchParams.get('text') || '')
+    const method = String(u.searchParams.get('method') || '')
     if (!c || !l || !t) return send(res, 400, { ok: false, error: 'c/l/uid' })
     const next = queue(function () {
       if (p === '/report/msg') return MSG.probe(c, l, t)
       const ids = l.split(',').map(function (x) { return x.trim() }).filter(Boolean)
-      return MSG.fire(c, ids, t, text)
+      return MSG.fire(c, ids, t, text, method)
     })
     return send(res, 200, await next)
+  }
+
+  // 운영자 전용 raw LOCO. POST {method, body}. body 안의 __long:["chatId","logId"] 로 Long 감싸기.
+  if (p === '/report/raw' && req.method === 'POST') {
+    const b = await readBody(req)
+    const r = await queue(function () { return MSG.raw(String(b.method || ''), b.body || {}) })
+    return send(res, 200, r)
   }
 
   send(res, 404, { ok: false })
