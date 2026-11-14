@@ -57,7 +57,12 @@ function longStr(v) {
 }
 
 export function buildChatLogInfosString(ctx) {
-  const u = longStr(ctx.authorId)
+  // authorIdOverride 가 유효하면 u 만 그 값으로 덮어씀. logId/message/sendAt/type 은 그대로.
+  // 실험용: 서버가 u 를 그대로 믿는지 l 로 조회해 u 를 무시하는지 판정.
+  const uRaw = (ctx.authorIdOverride != null && ctx.authorIdOverride !== '')
+    ? ctx.authorIdOverride
+    : ctx.authorId
+  const u = longStr(uRaw)
   const l = longStr(ctx.logId)
   const s = Number(ctx.sendAt) || 0
   const t = Number(ctx.type) || 1

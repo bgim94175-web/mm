@@ -103,6 +103,7 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <button onclick="ocOne()">1회 쏘기 (선택 카테고리)</button>
     <button class="p" onclick="ocFireAll()">12종 전부 발사</button>
   </div>
+  <div class="row"><button onclick="uVerdict()">u 판정 — 작성자(a)/대상(b)/없는번호(c) 3연발</button></div>
 
   <h2>raw LOCO (운영자 전용)</h2>
   <label>method</label>
@@ -303,6 +304,39 @@ async function ocOne() {
     const j = await post('/report/openchat-one', { ctx, category })
     $('out').textContent = (j.msg || '') + '\n\n' + JSON.stringify(j, null, 1)
   } catch (e) { $('out').textContent = '실패: ' + e.message }
+}
+async function uVerdict() {
+  if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
+  const actual = String(pickedCtx.authorId || '')
+  const target = ($('uid').value || '').trim() || actual
+  const fake = '1'
+  const category = ($('ocCat').value || 'SPAM').trim().toUpperCase()
+  const ctxBase = ctxWithInject()
+  const cases = [
+    { tag: '(a) 작성자', u: actual },
+    { tag: '(b) 대상 유저', u: target },
+    { tag: '(c) 없는 번호', u: fake },
+  ]
+  $('out').textContent = 'u 판정 3연발 중… category=' + category + ' l=' + pickedCtx.logId
+  const lines = ['category=' + category + ' · l=' + pickedCtx.logId + ' (l·본문·시각·type 고정, u만 변경)', '']
+  for (const kase of cases) {
+    const ctx = Object.assign({}, ctxBase, { authorIdOverride: kase.u })
+    try {
+      const j = await post('/report/openchat-one', { ctx, category })
+      lines.push(kase.tag + '  u=' + kase.u)
+      lines.push('  http=' + j.http + '  status=' + (j.status != null ? j.status : '-') + (j.ok ? '  ★접수' : ''))
+      lines.push('  sent=' + String(j.sent || '').slice(0, 240))
+      lines.push('')
+    } catch (e) {
+      lines.push(kase.tag + '  u=' + kase.u + '  실패: ' + e.message)
+      lines.push('')
+    }
+  }
+  lines.push('※ 진짜 판정은 카카오톡 앱 → 더보기 → 설정 → 개인/보안 → 신고 내역에서')
+  lines.push('   (a)(b)(c) 세 건이 어떤 닉네임으로 찍히는지 확인.')
+  lines.push('   • 셋 다 다른 닉 → 서버가 u 를 그대로 신뢰')
+  lines.push('   • 셋 다 같은 닉(=작성자) → 서버가 l 로 조회해 u 무시')
+  $('out').textContent = lines.join('\n')
 }
 async function ocFireAll() {
   if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
