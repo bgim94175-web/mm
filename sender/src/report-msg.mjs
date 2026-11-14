@@ -130,17 +130,32 @@ export async function probeShape(ctx) {
   const at = Number(sendAt) || 0
   const orig = typeof message === 'string' ? message : ''
 
+  // APK 26.8.3 디컴파일로 확정: {st, c, ls, ss, lds, lts, sr, bi(nullable, st==3 전용)}
+  // 바디 모양 맞음에도 -301(INTERNAL_SERVER_ERROR_BO) → 세션 상태 문제 유력.
+  // 앱은 신고 누르기 전 이미 그 방에 "들어와 있다" (CHATONROOM 완료). 우리 봇은 그 상태 없음.
   const base = { st: 3, c, ls, ss, lds: [TEXT[0]], lts: [1], sr: 0, bi: false }
-  // 앱은 "신고하고 나가기" 가 유일 → `bi`(block/leave)·`st`(subType)·`lv`·`out` 조합이 결정적일 듯.
+  const baseOrig = { ...base, lds: [orig || TEXT[0]] }  // APK 가 보내는 것 = 신고 대상 글 원문
+
+  // CHATONROOM 으로 방에 "입장" 시켜 세션 상태 만들고 BLSPAMS 쏘기
+  const warmup = async () => {
+    try {
+      await Promise.race([
+        send('CHATONROOM', li ? { chatId: c, linkId: li, opt: 0 } : { chatId: c, opt: 0 }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('warmup timeout')), 5000)),
+      ])
+      return true
+    } catch (e) { return false }
+  }
+
   const variants = [
-    { tag: 'bi=true', body: { ...base, bi: true } },
-    { tag: 'bi=true+li', body: li ? { ...base, bi: true, li } : null },
-    { tag: 'bi=true+leave', body: { ...base, bi: true, lv: true, out: true } },
-    { tag: 'st=1(leave?)', body: { ...base, st: 1, bi: true } },
-    { tag: 'st=2', body: { ...base, st: 2, bi: true } },
-    { tag: 'st=4', body: { ...base, st: 4, bi: true } },
-    { tag: '+li+at+orig+bi', body: li ? { ...base, bi: true, li, at: [at], lds: [orig || TEXT[0]] } : null },
-  ].filter((v) => v.body)
+    { tag: 'warmup+orig', warmup: true, body: baseOrig },
+    { tag: 'warmup+orig+bi=true', warmup: true, body: { ...baseOrig, bi: true } },
+    { tag: 'warmup+baseline', warmup: true, body: base },
+    { tag: 'bi=null', body: { ...base, bi: null } },
+    { tag: 'sr=1(홍보)+bi=true', body: { ...base, sr: 1, bi: true } },
+    { tag: 'orig+bi=true', body: { ...baseOrig, bi: true } },
+    { tag: 'orig+sr=1+bi=true', body: { ...baseOrig, sr: 1, bi: true } },
+  ]
 
   const GAP_FAST = 400
   const sendWithTimeout = async (body) => {
@@ -153,14 +168,20 @@ export async function probeShape(ctx) {
   const rows = []
   let winner = null
   for (const v of variants) {
+    let warmupNote = ''
+    if (v.warmup) {
+      const ok = await warmup()
+      warmupNote = ok ? '[warmup✓]' : '[warmup✗]'
+      await sleep(300)
+    }
     try {
       const r = await sendWithTimeout(v.body)
       const bs = r && r.body && typeof r.body.status === 'number' ? r.body.status : null
       const keys = r && r.body ? Object.keys(r.body) : []
-      rows.push(v.tag + ':' + (r && r.statusCode) + '/b=' + bs + (keys.length ? '(' + keys.join(',') + ')' : ''))
+      rows.push(warmupNote + v.tag + ':' + (r && r.statusCode) + '/b=' + bs + (keys.length ? '(' + keys.join(',') + ')' : ''))
       if (bs === 0 && !winner) winner = { tag: v.tag, body: v.body }
     } catch (e) {
-      rows.push(v.tag + ':ERR ' + String(e && e.message ? e.message : e).slice(0, 60))
+      rows.push(warmupNote + v.tag + ':ERR ' + String(e && e.message ? e.message : e).slice(0, 60))
     }
     await sleep(GAP_FAST)
   }
@@ -172,11 +193,15 @@ export async function probeShape(ctx) {
     ok: false, rows,
     text: '모든 변형 거부\n' + rows.join('\n')
       + (allSame301
-          ? '\n\n★ 전부 -301 (bi/lv/st 조합 다 거부). 남은 가설:\n'
-            + '  1) 메서드명이 BLSPAMS 가 아닌 신고+나가기 전용(BLSPAMLV·LEAVEREPORT 등)\n'
-            + '  2) 봇이 안드로이드 서브디바이스라 신고 권한 서버단 차단 — PC 슬롯 재로그인 필요\n'
-            + '  3) 신고와 나가기를 분리 전송 필요: BLSPAMS 먼저 → 따로 LEAVE'
-          : '\n\n다른 코드(-4042, -302, -303, 0) 섞여 있으면 그 변형이 정답에 가까움.'),
+          ? '\n\n★ warmup 포함 전부 -301 (INTERNAL_SERVER_ERROR_BO):\n'
+            + '  → 세션 상태로도 안 됨. 서버가 우리 세션을 "신고 자격 없음" 으로 분류했을 가능성\n'
+            + '  남은 가설:\n'
+            + '    a) 세션이 로그인 직후부터 서버 anti-abuse 리스트에 올라 있음\n'
+            + '    b) 봇 계정이 그 방에 아직 \"정식 멤버\" 로 안 잡혀 있음 (NEWMEM push 못 받음)\n'
+            + '    c) BLSPAMS 가 아닌 인접 메서드 — APK 에서 sendPacket 호출 전부 grep:\n'
+            + '       grep -E "sendPacket.*(BLSPAM|SPAM|REPORT)" 로 추가 후보 찾기\n'
+            + '    d) 특정 세션 플래그 (쓰기 제한·신고 받은 이력 계정 등)'
+          : '\n\n다른 코드(0, -4042, -302, -303) 섞여 있으면 그 변형이 정답에 가까움.'),
   }
 }
 
