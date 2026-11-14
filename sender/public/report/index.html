@@ -1,0 +1,136 @@
+
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>신고 콘솔</title>
+<link rel="manifest" href="/report/manifest.json">
+<link rel="apple-touch-icon" href="/report/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="신고">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 -apple-system,sans-serif;background:#111;color:#eee;padding:16px 16px 32px}
+h1{font-size:17px;margin:0 0 12px}
+label{display:block;font-size:12px;color:#999;margin:12px 0 4px}
+input,select{width:100%;padding:11px;border-radius:10px;border:1px solid #333;background:#1b1b1b;color:#eee;font-size:16px}
+button{padding:14px;border-radius:10px;border:0;background:#2a2a2a;color:#eee;font-size:15px;font-weight:600}
+button.p{background:#3b6ef5}
+.g{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
+pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size:12px;white-space:pre-wrap;word-break:break-all;min-height:56px}
+.row{display:flex;gap:8px;margin-top:12px}
+.row button{flex:1}
+.card{border:1px solid #2a2a2a;border-radius:14px;padding:14px;margin-bottom:16px}
+.me{font-size:12px;color:#888;word-break:break-all}
+.hide{display:none}
+</style>
+
+
+<h1>오픈채팅 신고 콘솔</h1>
+
+<div id="login">
+  <div class="card">
+    <label>API 키</label>
+    <input id="k" placeholder="SENDER_REPORT_API_KEY" autocomplete="off">
+    <label>카카오 아이디</label>
+    <input id="email" autocomplete="username" placeholder="example@kakao.com">
+    <label>비밀번호</label>
+    <input id="pw" type="password" autocomplete="current-password">
+    <label>기기 유형</label>
+    <select id="dt"><option value="tablet">tablet</option><option value="pc">pc</option></select>
+    <div class="row"><button class="p" onclick="doLogin()">로그인</button></div>
+    <div id="passBox" class="hide">
+      <label>인증번호</label>
+      <input id="code" inputmode="numeric">
+      <div class="row"><button class="p" onclick="doPass()">확인</button></div>
+    </div>
+    <pre id="loginOut" class="hide"></pre>
+  </div>
+</div>
+
+<div id="app" class="hide">
+  <div class="card">
+    <div class="me" id="me"></div>
+    <div class="row"><button onclick="doLogout()">로그아웃</button><button onclick="refreshMe()">새로고침</button></div>
+  </div>
+
+  <label>대상 userId</label>
+  <input id="uid" inputmode="numeric" placeholder="숫자만">
+  <label>주입할 문장 (선택)</label>
+  <input id="txt" placeholder="비우면 기본 문장">
+
+  <div class="g">
+    <button onclick="go('status')">상태</button>
+    <button onclick="go('host')">호스트</button>
+    <button onclick="go('slugs')">사유 12종</button>
+    <button class="p" onclick="go('fire')">전량 발사</button>
+  </div>
+
+  <pre id="out">대기</pre>
+  <div class="row"><button onclick="share()">결과 공유</button><button onclick="copy()">복사</button></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id)
+const st = JSON.parse(localStorage.getItem('rp4') || '{}')
+$('k').value = st.k || ''; $('email').value = st.email || ''; $('uid').value = st.uid || ''; $('txt').value = st.txt || ''
+const save = () => localStorage.setItem('rp4', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value }))
+const q = () => '?k=' + encodeURIComponent($('k').value)
+
+async function post(path, body) {
+  const r = await fetch(path + q(), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  return r.json()
+}
+async function doLogin() {
+  save(); $('loginOut').classList.remove('hide'); $('loginOut').textContent = '로그인 중…'
+  try {
+    const j = await post('/report/login', { email: $('email').value.trim(), password: $('pw').value, deviceType: $('dt').value })
+    $('loginOut').textContent = JSON.stringify(j, null, 1)
+    if (j.ok) return enter()
+    if (j.needPasscode) $('passBox').classList.remove('hide')
+  } catch (e) { $('loginOut').textContent = '실패: ' + e.message }
+}
+async function doPass() {
+  $('loginOut').textContent = '확인 중…'
+  try {
+    const j = await post('/report/passcode', { code: $('code').value.trim() })
+    $('loginOut').textContent = JSON.stringify(j, null, 1)
+    if (j.ok) return enter()
+  } catch (e) { $('loginOut').textContent = '실패: ' + e.message }
+}
+function enter() { $('login').classList.add('hide'); $('app').classList.remove('hide'); refreshMe() }
+async function refreshMe() {
+  try {
+    const j = await (await fetch('/report/me' + q())).json()
+    if (!j.loggedIn) { $('login').classList.remove('hide'); $('app').classList.add('hide'); return }
+    $('me').textContent = '로그인됨 · ' + j.email + ' · uid ' + j.userId
+  } catch {}
+}
+async function doLogout() {
+  await post('/report/logout', {})
+  $('app').classList.add('hide'); $('login').classList.remove('hide'); $('loginOut').classList.add('hide')
+}
+async function go(what) {
+  save()
+  const uid = $('uid').value.trim()
+  if (what !== 'status' && !uid) { $('out').textContent = 'userId 필요'; return }
+  const p = new URLSearchParams({ k: $('k').value, uid })
+  if (what === 'fire') p.set('text', $('txt').value)
+  $('out').textContent = '요청 중…'
+  try {
+    const r = await fetch('/report/' + what + '?' + p)
+    $('out').textContent = JSON.stringify(await r.json(), null, 1)
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
+}
+function share() {
+  const t = $('out').textContent
+  if (navigator.share) navigator.share({ title: '신고 결과', text: t }).catch(() => {})
+  else copy()
+}
+function copy() { navigator.clipboard.writeText($('out').textContent) }
+
+refreshMe()
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/report/sw.js')
+</script>
+

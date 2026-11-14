@@ -1,0 +1,11 @@
+{
+  "name": "신고 콘솔",
+  "short_name": "신고",
+  "start_url": "/report",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [
+    { "src": "/report/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
