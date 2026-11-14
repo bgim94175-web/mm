@@ -221,7 +221,11 @@ async function loadMsgs(chatId) {
     const j = await r.json()
     if (!j.ok) { box.innerHTML = '<div class="item">실패: ' + esc(j.text || JSON.stringify(j)) + '</div>'; return }
     const msgs = Array.isArray(j.messages) ? j.messages : []
-    if (!msgs.length) { box.innerHTML = '<div class="item">메시지 없음</div>'; return }
+    if (!msgs.length) {
+      const tr = Array.isArray(j.trace) ? j.trace.join(' · ') : ''
+      box.innerHTML = '<div class="item">메시지 없음<div class="s">' + esc(tr) + '</div></div>'
+      return
+    }
     box.innerHTML = msgs.map((m) => {
       const when = m.sendAt ? new Date(m.sendAt * 1000).toLocaleString('ko-KR', { hour: '2-digit', minute: '2-digit', month: 'numeric', day: 'numeric' }) : ''
       return '<div class="item" onclick="pickMsg(\'' + chatId + '\',\'' + m.logId + '\',\'' + m.authorId + '\')">' +

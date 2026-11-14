@@ -59,27 +59,68 @@ export function rooms() {
   return { ok: true, count: items.length, rooms: items, text: '방 ' + items.length + '개' }
 }
 
-// 방 하나의 최근 메시지. SYNCMSG {chatId, cur:0, cnt:N, max:0} → 가장 최근 N 개
+// 방 하나의 최근 메시지. 라이브러리 패턴:
+//   1) MCHATLOGS {chatIds:[c], sinces:[0]} → chatLogs[]
+//   2) 비면 CHATINFO 로 lastLogId → SYNCMSG {c, cur:last-80, cnt, max:last}
 export async function messages(chatId, cnt) {
   if (!ready()) return { ok: false, text: 'LOCO 세션 없음' }
   if (!chatId) return { ok: false, text: 'chatId 필요' }
-  const n = Math.max(1, Math.min(50, Number(cnt) || 10))
+  const n = Math.max(1, Math.min(80, Number(cnt) || 15))
   const L = await longOf()
-  let r
+  const cid = L.fromString(String(chatId))
+  const trace = []
+
+  // ① MCHATLOGS 먼저
+  let logs = []
   try {
-    r = await send('SYNCMSG', {
-      chatId: L.fromString(String(chatId)),
-      cur: L.fromNumber(0),
-      cnt: n,
-      max: L.fromNumber(0),
-    })
+    const r = await send('MCHATLOGS', { chatIds: [cid], sinces: [L.fromNumber(0)] })
+    trace.push('MCHATLOGS st=' + (r && r.statusCode))
+    if (r && r.statusCode === 0 && r.body && Array.isArray(r.body.chatLogs)) {
+      logs = r.body.chatLogs.filter((lg) => toIdString(lg.chatId) === String(chatId))
+      trace.push('mchat=' + logs.length)
+    }
   } catch (e) {
-    return { ok: false, text: 'SYNCMSG 실패: ' + (e && e.message ? e.message : e) }
+    trace.push('MCHATLOGS ERR ' + (e && e.message ? e.message : e))
   }
-  if (!r || r.statusCode !== 0) {
-    return { ok: false, statusCode: r && r.statusCode, body: r && r.body, text: 'SYNCMSG 상태 ' + (r && r.statusCode) }
+
+  // ② 비면 CHATINFO 로 max 받아서 SYNCMSG
+  if (!logs.length) {
+    let maxLogId = null
+    try {
+      const info = await send('CHATINFO', { chatId: cid })
+      trace.push('CHATINFO st=' + (info && info.statusCode))
+      const ci = info && info.body && info.body.chatInfo
+      if (ci && ci.lastLogId != null) {
+        const s = toIdString(ci.lastLogId)
+        if (s && s !== '0') maxLogId = L.fromString(s)
+      }
+    } catch (e) {
+      trace.push('CHATINFO ERR ' + (e && e.message ? e.message : e))
+    }
+
+    if (maxLogId) {
+      try {
+        // cur 는 "이 id 보다 큰" 글. max-N 쯤에서 시작해 최신 N 개 받기
+        const n80 = BigInt(n + 20)
+        const cur = (() => {
+          try {
+            const mstr = toIdString(maxLogId)
+            const back = BigInt(mstr) - n80
+            return back > 0n ? L.fromString(String(back)) : L.fromNumber(0)
+          } catch (e) { return L.fromNumber(0) }
+        })()
+        const sync = await send('SYNCMSG', { chatId: cid, cur, cnt: n, max: maxLogId })
+        trace.push('SYNCMSG st=' + (sync && sync.statusCode))
+        if (sync && sync.statusCode === 0 && sync.body && Array.isArray(sync.body.chatLogs)) {
+          logs = sync.body.chatLogs.filter((lg) => toIdString(lg.chatId) === String(chatId))
+          trace.push('sync=' + logs.length)
+        }
+      } catch (e) {
+        trace.push('SYNCMSG ERR ' + (e && e.message ? e.message : e))
+      }
+    }
   }
-  const logs = (r.body && Array.isArray(r.body.chatLogs)) ? r.body.chatLogs : []
+
   const items = logs.map((log) => {
     const text = typeof log.message === 'string' ? log.message : ''
     return {
@@ -89,13 +130,12 @@ export async function messages(chatId, cnt) {
       sendAt: Number(log.sendAt) || 0,
       message: text.slice(0, 200),
     }
-  })
-  // 최신이 위로
+  }).slice(0, n)
   items.sort((a, b) => {
     const A = BigInt(a.logId || '0'), B = BigInt(b.logId || '0')
     return A > B ? -1 : A < B ? 1 : 0
   })
-  return { ok: true, count: items.length, chatId: String(chatId), messages: items }
+  return { ok: true, count: items.length, chatId: String(chatId), messages: items, trace }
 }
 
 // CHATINFO 로 방 멤버 포함 상세. 열린 방의 공식 멤버 목록도 여기서.
