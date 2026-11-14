@@ -34,48 +34,71 @@ function authHeader() {
   }
 }
 
-// chatLogInfos 는 **문자열** (JSON 배열을 toString 한 것). 각 원소 모양:
-//   { u: userId(long), m: {message, referer, revision}, s: sendAt(int),
-//     t: type(int), l: logId(long), scope: int, threadId: long|null }
+// chatLogInfos 는 **문자열** (JSON 배열). 큰 ID(u/l) 가 2^53 넘으면 Number() 로 뭉개져서
+// 서버 -203 → 수동 조립으로 raw JSON number 유지.
+function jsonEscape(s) {
+  return String(s).replace(/[\\"\n\r\t\u0000-\u001f]/g, (c) => {
+    if (c === '\\') return '\\\\'
+    if (c === '"') return '\\"'
+    if (c === '\n') return '\\n'
+    if (c === '\r') return '\\r'
+    if (c === '\t') return '\\t'
+    return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4)
+  })
+}
+function longStr(v) {
+  // 입력: string|number|bigint — 전부 digit-only string 으로
+  if (v == null || v === '') return '0'
+  if (typeof v === 'bigint') return v.toString()
+  const s = String(v).trim()
+  if (/^-?\d+$/.test(s)) return s
+  // 이상한 값이면 0
+  return '0'
+}
+
 export function buildChatLogInfosString(ctx) {
-  const entry = {
-    u: Number(ctx.authorId) || 0,
-    m: {
-      message: String(ctx.message || ''),
-      referer: 0,
-      revision: 0,
-    },
-    s: Number(ctx.sendAt) || 0,
-    t: Number(ctx.type) || 1,
-    l: Number(ctx.logId) || 0,
-    scope: 1,
-  }
-  return JSON.stringify([entry])
+  const u = longStr(ctx.authorId)
+  const l = longStr(ctx.logId)
+  const s = Number(ctx.sendAt) || 0
+  const t = Number(ctx.type) || 1
+  const msg = jsonEscape(ctx.message || '')
+  // threadId 생략 — 앱도 null 일 때 안 보냄
+  return '[{"u":' + u + ',"m":{"message":"' + msg + '","referer":0,"revision":0},"s":' + s + ',"t":' + t + ',"l":' + l + ',"scope":1}]'
 }
 
 export function buildBody(ctx, category) {
+  // linkId/chatId 도 큰 숫자. JSON.stringify 가 Number 를 받으면 정밀도 손실 → raw string 조립.
+  const linkId = longStr(ctx.linkId)
+  const chatId = longStr(ctx.chatId)
+  const cat = jsonEscape(String(category || 'SPAM'))
+  const infos = jsonEscape(buildChatLogInfosString(ctx))  // 바깥 JSON 안에 문자열로 들어감 → escape 한 번 더
   return {
-    category: String(category || 'SPAM'),
-    linkId: Number(ctx.linkId) || 0,
-    chatId: Number(ctx.chatId) || 0,
-    chatLogInfos: buildChatLogInfosString(ctx),
+    _raw: '{"category":"' + cat + '","linkId":' + linkId + ',"chatId":' + chatId + ',"chatLogInfos":"' + infos + '"}',
   }
 }
 
 async function hit(body, { timeoutMs = 4000, host = HOST } = {}) {
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), timeoutMs)
+  // body 가 { _raw: "..." } 이면 raw JSON 문자열을 그대로, 아니면 stringify
+  const payload = body && typeof body._raw === 'string' ? body._raw : JSON.stringify(body)
   try {
     const r = await fetch(host + PATH, {
       method: 'POST',
       headers: authHeader(),
-      body: JSON.stringify(body),
+      body: payload,
       signal: ctrl.signal,
     })
     const text = await r.text()
     let j = null
     try { j = JSON.parse(text) } catch (e) {}
-    return { httpCode: r.status, status: j && typeof j.status === 'number' ? j.status : null, body: j, text: !j ? text.slice(0, 200) : null }
+    return {
+      httpCode: r.status,
+      status: j && typeof j.status === 'number' ? j.status : null,
+      body: j,
+      text: !j ? text.slice(0, 200) : null,
+      sent: payload.slice(0, 400),  // 디버그: 실제 보낸 body 앞 400자
+    }
   } catch (e) {
     return { httpCode: 0, err: String(e && e.message ? e.message : e) }
   } finally {
@@ -90,7 +113,7 @@ export async function reportOne(ctx, category) {
   const r = await hit(body)
   const ok = r.httpCode === 200 && r.status === 0
   return {
-    ok, category, body, http: r.httpCode, status: r.status, respBody: r.body, text: r.text,
+    ok, category, sent: r.sent, http: r.httpCode, status: r.status, respBody: r.body, text: r.text,
     msg: (ok ? '★ 접수' : '실패') + ' category=' + category + ' http=' + r.httpCode + ' status=' + r.status + (r.err ? ' err=' + r.err : ''),
   }
 }
