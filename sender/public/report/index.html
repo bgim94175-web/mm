@@ -325,6 +325,18 @@ async function uVerdict() {
       const j = await post('/report/openchat-one', { ctx, category })
       lines.push(kase.tag + '  u=' + kase.u)
       lines.push('  http=' + j.http + '  status=' + (j.status != null ? j.status : '-') + (j.ok ? '  ★접수' : ''))
+      // respBody 전체 — status 외에 reportUrl / url / id 같은 필드가 있으면 여기서 보임
+      const rb = j.respBody
+      if (rb && typeof rb === 'object') {
+        const extras = {}
+        for (const k of Object.keys(rb)) if (k !== 'status') extras[k] = rb[k]
+        const keys = Object.keys(extras)
+        lines.push('  respBody keys: [' + Object.keys(rb).join(', ') + ']')
+        if (keys.length) lines.push('  extra = ' + JSON.stringify(extras))
+        else lines.push('  extra = (status 외 필드 없음)')
+      } else if (j.text) {
+        lines.push('  respText=' + String(j.text).slice(0, 240))
+      }
       lines.push('  sent=' + String(j.sent || '').slice(0, 240))
       lines.push('')
     } catch (e) {
