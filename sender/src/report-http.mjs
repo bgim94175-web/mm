@@ -21,23 +21,31 @@ function headersOf() {
 }
 
 async function hit(host, slug, body) {
-  const r = await fetch(`${host}/talk/profile25/report/${slug}`, {
-    method: 'POST', headers: headersOf(), body: JSON.stringify(body),
-  })
-  let j = null
-  try { j = await r.json() } catch {}
-  return { code: r.status, st: j && j.status, url: j && j.url }
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 8000)
+  try {
+    const r = await fetch(`${host}/talk/profile25/report/${slug}`, {
+      method: 'POST', headers: headersOf(), body: JSON.stringify(body), signal: ctrl.signal,
+    })
+    let j = null
+    try { j = await r.json() } catch {}
+    return { code: r.status, st: j && j.status, url: j && j.url }
+  } catch (e) {
+    return { code: 0, st: null, url: null, err: String(e && e.message || e) }
+  } finally {
+    clearTimeout(t)
+  }
 }
 
 async function pickHost(userId) {
   const body = { userId: String(userId), referer: 1, meta: {}, attachments: [] }
   for (const h of HOSTS) {
     const r = await hit(h, 'etc', body)
-    L(`report host ${h} → ${r.code}`)
+    L(`report host ${h} → ${r.code}${r.err ? ' ' + r.err : ''}`)
     await sleep(GAP)
-    if (r.code !== 404) return { host: h, first: r }
+    if (r.code > 0 && r.code !== 404) return { host: h, first: r }
   }
-  throw new Error('host 미확정')
+  throw new Error('host 미확정 (모두 응답 없음 또는 404)')
 }
 
 export function status() {

@@ -1,4 +1,4 @@
-const C = 'rp-v4'
+const C = 'rp-v5'
 const SHELL = ['/report', '/report/manifest.json', '/report/icon.svg']
 self.addEventListener('install', (e) => e.waitUntil(caches.open(C).then((c) => c.addAll(SHELL))))
 self.addEventListener('activate', (e) => e.waitUntil(
