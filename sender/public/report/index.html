@@ -72,8 +72,8 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   <label>대상 userId</label>
   <input id="uid" inputmode="numeric" placeholder="숫자만 — 메시지 클릭 시 자동">
   <div id="profBox" class="me hide" style="margin-top:6px"></div>
-  <label>주입할 문장 (선택)</label>
-  <input id="txt" placeholder="비우면 기본 문장">
+  <label>주입할 문장 (선택 — 카카오 심사자료로 올라가는 "원문")</label>
+  <input id="txt" placeholder="비우면 글의 진짜 원문. 넣으면 이 문장이 신고 자료로 올라감.">
 
   <h2>프로필 신고</h2>
   <div class="g">
@@ -289,20 +289,27 @@ async function pickMsg(chatId, logId, authorId, m) {
     $('out').textContent = '자동 채움 완료 → c=' + chatId + ' · l=' + logId + ' · uid=' + authorId + '\n이제 [메서드 찾기] 를 눌러.'
   } catch (e) { pb.textContent = '오픈프로필 실패: ' + e.message }
 }
+function ctxWithInject() {
+  // "주입할 문장" 이 비어있지 않으면 원문 대신 그걸 서버에 보냄 (심사 자료 조작)
+  const inject = ($('txt').value || '').trim()
+  return Object.assign({}, pickedCtx, inject ? { injectText: inject } : {})
+}
 async function ocOne() {
   if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
   const category = ($('ocCat').value || 'SPAM').trim().toUpperCase()
-  $('out').textContent = '오픈챗 1회 (' + category + ') 쏘는 중…'
+  const ctx = ctxWithInject()
+  $('out').textContent = '오픈챗 1회 (' + category + ') 쏘는 중…' + (ctx.injectText ? ' [조작문:' + ctx.injectText.slice(0, 40) + ']' : '')
   try {
-    const j = await post('/report/openchat-one', { ctx: pickedCtx, category })
+    const j = await post('/report/openchat-one', { ctx, category })
     $('out').textContent = (j.msg || '') + '\n\n' + JSON.stringify(j, null, 1)
   } catch (e) { $('out').textContent = '실패: ' + e.message }
 }
 async function ocFireAll() {
   if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
-  $('out').textContent = '오픈챗 12종 발사 중… (~20초)'
+  const ctx = ctxWithInject()
+  $('out').textContent = '오픈챗 12종 발사 중… (~6초)' + (ctx.injectText ? ' [조작문:' + ctx.injectText.slice(0, 40) + ']' : '')
   try {
-    const j = await post('/report/openchat-fireAll', { ctx: pickedCtx })
+    const j = await post('/report/openchat-fireAll', { ctx })
     $('out').textContent = j.text || JSON.stringify(j, null, 1)
   } catch (e) { $('out').textContent = '실패: ' + e.message }
 }

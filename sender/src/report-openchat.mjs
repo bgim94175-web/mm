@@ -61,7 +61,9 @@ export function buildChatLogInfosString(ctx) {
   const l = longStr(ctx.logId)
   const s = Number(ctx.sendAt) || 0
   const t = Number(ctx.type) || 1
-  const msg = jsonEscape(ctx.message || '')
+  // injectText 가 있으면 그걸로 원문 조작, 없으면 실제 원문. 심사 자료가 됨.
+  const rawMsg = (ctx.injectText && String(ctx.injectText).trim()) ? String(ctx.injectText) : String(ctx.message || '')
+  const msg = jsonEscape(rawMsg)
   // threadId 생략 — 앱도 null 일 때 안 보냄
   return '[{"u":' + u + ',"m":{"message":"' + msg + '","referer":0,"revision":0},"s":' + s + ',"t":' + t + ',"l":' + l + ',"scope":1}]'
 }
