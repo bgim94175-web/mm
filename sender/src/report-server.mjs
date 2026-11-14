@@ -6,6 +6,7 @@ import * as AUTH from './report-auth.mjs'
 import * as RH from './report-http.mjs'
 import * as LOCO from './report-loco.mjs'
 import * as MSG from './report-msg.mjs'
+import * as BROWSE from './report-browse.mjs'
 
 const PORT = Number(process.env.PORT || 8080)
 const PUB = join(process.cwd(), 'public', 'report')
@@ -168,6 +169,28 @@ async function handle(req, res) {
   if (p === '/report/raw' && req.method === 'POST') {
     const b = await readBody(req)
     const r = await queue(function () { return MSG.raw(String(b.method || ''), b.body || {}) })
+    return send(res, 200, r)
+  }
+
+  // 둘러보기 — 봇이 로그인한 방 목록
+  if (p === '/report/rooms') {
+    if (!LOCO.ready()) {
+      try { await LOCO.connect() }
+      catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message ? e.message : e) }) }
+    }
+    return send(res, 200, BROWSE.rooms())
+  }
+
+  // 방 하나의 최근 메시지
+  if (p === '/report/room-msgs') {
+    const c = String(u.searchParams.get('c') || '')
+    const cnt = Number(u.searchParams.get('cnt') || '15')
+    if (!c) return send(res, 400, { ok: false, error: 'c' })
+    if (!LOCO.ready()) {
+      try { await LOCO.connect() }
+      catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message ? e.message : e) }) }
+    }
+    const r = await queue(function () { return BROWSE.messages(c, cnt) })
     return send(res, 200, r)
   }
 

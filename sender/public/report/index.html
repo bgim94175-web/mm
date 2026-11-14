@@ -25,6 +25,13 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
 .card{border:1px solid #2a2a2a;border-radius:14px;padding:14px;margin-bottom:16px}
 .me{font-size:12px;color:#888;word-break:break-all}
 .hide{display:none}
+.list{margin-top:8px;max-height:280px;overflow-y:auto;border:1px solid #2a2a2a;border-radius:10px}
+.item{padding:10px 12px;border-bottom:1px solid #222;cursor:pointer;font-size:13px}
+.item:last-child{border-bottom:0}
+.item:active{background:#223}
+.item .t{font-weight:600;color:#9ab}
+.item .s{color:#888;font-size:11px;margin-top:2px}
+.item .m{color:#ccc;font-size:12px;margin-top:3px;word-break:break-all}
 </style>
 
 
@@ -57,8 +64,13 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <div class="row"><button onclick="doLogout()">로그아웃</button><button onclick="refreshMe()">새로고침</button><button onclick="locoReconnect()">LOCO 재연결</button></div>
   </div>
 
+  <h2>둘러보기 (자동 채우기)</h2>
+  <div class="row"><button onclick="loadRooms()">방 목록 불러오기</button></div>
+  <div id="roomList" class="list hide"></div>
+  <div id="msgList" class="list hide"></div>
+
   <label>대상 userId</label>
-  <input id="uid" inputmode="numeric" placeholder="숫자만">
+  <input id="uid" inputmode="numeric" placeholder="숫자만 — 메시지 클릭 시 자동">
   <label>주입할 문장 (선택)</label>
   <input id="txt" placeholder="비우면 기본 문장">
 
@@ -181,6 +193,48 @@ async function go(what) {
     $('out').textContent = JSON.stringify(await r.json(), null, 1)
   } catch (e) { $('out').textContent = '실패: ' + e.message }
   finally { clearInterval(tick); lock(false) }
+}
+function esc(s) { return String(s || '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) }
+async function loadRooms() {
+  const box = $('roomList'); box.classList.remove('hide'); box.innerHTML = '<div class="item">불러오는 중…</div>'
+  $('msgList').classList.add('hide'); $('msgList').innerHTML = ''
+  try {
+    const r = await fetch('/report/rooms' + q())
+    const j = await r.json()
+    if (!j.ok) { box.innerHTML = '<div class="item">실패: ' + esc(j.text || JSON.stringify(j)) + '</div>'; return }
+    const rooms = Array.isArray(j.rooms) ? j.rooms : []
+    if (!rooms.length) { box.innerHTML = '<div class="item">방 없음</div>'; return }
+    box.innerHTML = rooms.map((rm) =>
+      '<div class="item" onclick="loadMsgs(\'' + rm.chatId + '\')">' +
+        '<div class="t">' + esc(rm.typeName) + ' · ' + rm.activeMembers + '명 · ' + esc(rm.members || '(이름없음)') + '</div>' +
+        '<div class="s">chat_id ' + rm.chatId + (rm.linkId ? ' · link_id ' + rm.linkId : '') + '</div>' +
+        '<div class="m">' + esc(rm.preview || '(글 없음)') + '</div>' +
+      '</div>'
+    ).join('')
+  } catch (e) { box.innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
+}
+async function loadMsgs(chatId) {
+  $('c').value = chatId; save()
+  const box = $('msgList'); box.classList.remove('hide'); box.innerHTML = '<div class="item">불러오는 중…</div>'
+  try {
+    const r = await fetch('/report/room-msgs?c=' + encodeURIComponent(chatId) + '&cnt=15&k=' + encodeURIComponent($('k').value))
+    const j = await r.json()
+    if (!j.ok) { box.innerHTML = '<div class="item">실패: ' + esc(j.text || JSON.stringify(j)) + '</div>'; return }
+    const msgs = Array.isArray(j.messages) ? j.messages : []
+    if (!msgs.length) { box.innerHTML = '<div class="item">메시지 없음</div>'; return }
+    box.innerHTML = msgs.map((m) => {
+      const when = m.sendAt ? new Date(m.sendAt * 1000).toLocaleString('ko-KR', { hour: '2-digit', minute: '2-digit', month: 'numeric', day: 'numeric' }) : ''
+      return '<div class="item" onclick="pickMsg(\'' + chatId + '\',\'' + m.logId + '\',\'' + m.authorId + '\')">' +
+        '<div class="t">' + esc(when) + ' · type ' + m.type + ' · author ' + m.authorId + '</div>' +
+        '<div class="s">log_id ' + m.logId + '</div>' +
+        '<div class="m">' + esc(m.message || '(빈 글)') + '</div>' +
+      '</div>'
+    }).join('')
+  } catch (e) { box.innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
+}
+function pickMsg(chatId, logId, authorId) {
+  $('c').value = chatId; $('l').value = logId; $('uid').value = authorId; save()
+  $('out').textContent = '자동 채움 완료 → c=' + chatId + ' · l=' + logId + ' · uid=' + authorId + '\n이제 [메서드 찾기] 를 눌러.'
 }
 async function raw() {
   save()

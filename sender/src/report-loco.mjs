@@ -11,6 +11,7 @@ let lastErr = ''
 
 export const ready = () => !!(state && state.session && state.session.connection && state.session.connection.sendPacket)
 export const error = () => lastErr
+export const loginResult = () => (state && state.loginResult) || null
 
 export function close() {
   try { if (state && state.session && state.session.close) state.session.close() } catch (e) {}
