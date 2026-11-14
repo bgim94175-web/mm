@@ -131,15 +131,15 @@ export async function probeShape(ctx) {
   const orig = typeof message === 'string' ? message : ''
 
   const base = { st: 3, c, ls, ss, lds: [TEXT[0]], lts: [1], sr: 0, bi: false }
-  // 가장 가능성 큰 7개만. 10초 안 끝남.
+  // 앱은 "신고하고 나가기" 가 유일 → `bi`(block/leave)·`st`(subType)·`lv`·`out` 조합이 결정적일 듯.
   const variants = [
-    { tag: '+li+at+orig', body: li ? { ...base, li, at: [at], lds: [orig || TEXT[0]] } : null },
-    { tag: '+li', body: li ? { ...base, li } : null },
-    { tag: '+orig(lds)', body: { ...base, lds: [orig || TEXT[0]] } },
-    { tag: '+at', body: { ...base, at: [at] } },
-    { tag: 'st=0', body: { ...base, st: 0 } },
-    { tag: 'no-bi', body: (() => { const b = { ...base }; delete b.bi; return b })() },
-    { tag: 'minimal{c,ls,sr}', body: { c, ls, sr: 0 } },
+    { tag: 'bi=true', body: { ...base, bi: true } },
+    { tag: 'bi=true+li', body: li ? { ...base, bi: true, li } : null },
+    { tag: 'bi=true+leave', body: { ...base, bi: true, lv: true, out: true } },
+    { tag: 'st=1(leave?)', body: { ...base, st: 1, bi: true } },
+    { tag: 'st=2', body: { ...base, st: 2, bi: true } },
+    { tag: 'st=4', body: { ...base, st: 4, bi: true } },
+    { tag: '+li+at+orig+bi', body: li ? { ...base, bi: true, li, at: [at], lds: [orig || TEXT[0]] } : null },
   ].filter((v) => v.body)
 
   const GAP_FAST = 400
@@ -172,11 +172,11 @@ export async function probeShape(ctx) {
     ok: false, rows,
     text: '모든 변형 거부\n' + rows.join('\n')
       + (allSame301
-          ? '\n\n★ 전부 -301 → 바디 문제 아님. 가장 유력한 원인:\n'
-            + '  1) 해외 계정: 카카오가 한국 오픈챗 신고를 막음\n'
-            + '  2) 안드로이드 서브디바이스(태블릿 슬롯) 신고 권한 없음 — PC 로 다시 로그인 시도\n'
-            + '  3) 봇 계정이 그 방에 신고 권한 없는 상태 (ex. 봇 자신)'
-          : '\n\n다른 코드(-4042, -302, -303) 섞여 있으면 그 변형이 정답에 가까움.'),
+          ? '\n\n★ 전부 -301 (bi/lv/st 조합 다 거부). 남은 가설:\n'
+            + '  1) 메서드명이 BLSPAMS 가 아닌 신고+나가기 전용(BLSPAMLV·LEAVEREPORT 등)\n'
+            + '  2) 봇이 안드로이드 서브디바이스라 신고 권한 서버단 차단 — PC 슬롯 재로그인 필요\n'
+            + '  3) 신고와 나가기를 분리 전송 필요: BLSPAMS 먼저 → 따로 LEAVE'
+          : '\n\n다른 코드(-4042, -302, -303, 0) 섞여 있으면 그 변형이 정답에 가까움.'),
   }
 }
 
