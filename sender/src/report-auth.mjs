@@ -33,6 +33,9 @@ export async function login(email, password, deviceType = 'tablet') {
   if (!email || !password) return { ok: false, message: '아이디·비번 필요' }
   const prev = load()
   const duuid = (prev && prev.duuid) || randomUUID().replace(/-/g, '')
+  // duuid는 로그인→패스코드→기기등록→재로그인 전 과정에서 같아야 한다.
+  // 성공 전에도 즉시 저장해 매 시도마다 새 기기가 생기는 무한 루프를 막는다.
+  if (!prev || !prev.duuid) save({ duuid })
   const am = await auth()
 
   let r
