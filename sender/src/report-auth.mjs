@@ -3,7 +3,8 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-const LIB = '../../../node_modules/agent-messenger/dist/src/platforms/kakaotalk/auth/kakao-login.js'
+const LIB = 'agent-messenger/dist/src/platforms/kakaotalk/auth/kakao-login.js'
+const LIB_REL = '../node_modules/agent-messenger/dist/src/platforms/kakaotalk/auth/kakao-login.js'
 const DATA = join(process.cwd(), 'data', 'report')
 const FILE = join(DATA, 'console-auth.json')
 const DEVICE = 'SM-X710'
@@ -24,16 +25,34 @@ function save(c) {
 export const get = () =&gt; load()
 export function clear() { cred = null; pending = null; try { writeFileSync(FILE, '{}') } catch {} }
 
-async function auth() { return import(new URL(LIB, import.meta.url).href) }
+async function auth() {
+  try { return await import(LIB) } catch {}
+  return import(new URL(LIB_REL, import.meta.url).href)
+}
+
+// 라이브러리 버전마다 인자 모양이 달라서 순서대로 시도한다
+async function call(fn, variants) {
+  let last = null
+  for (const v of variants) {
+    try { return await fn(...v) } catch (e) { last = e }
+  }
+  throw last || new Error('호출 실패')
+}
 
 export async function login(email, password, deviceType = 'tablet') {
   if (!email || !password) return { ok: false, message: '아이디·비번 필요' }
   const prev = load()
   const duuid = (prev &amp;&amp; prev.duuid) || randomUUID().replace(/-/g, '')
   const am = await auth()
+
   let r
-  try { r = await am.attemptLogin(email, password, duuid, deviceType, false, null, DEVICE, DEVICE) }
-  catch (e) { return { ok: false, message: String(e.message || e) } }
+  try {
+    r = await call(am.attemptLogin, [
+      [email, password, duuid, deviceType, false, null, DEVICE, DEVICE],
+      [email, password, duuid, deviceType],
+      [{ email, password, deviceUuid: duuid, deviceType, deviceName: DEVICE, modelName: DEVICE }],
+    ])
+  } catch (e) { return { ok: false, message: String(e.message || e) } }
 
   const status = r &amp;&amp; r.status
   if (status === 0 &amp;&amp; r.oauthToken) {
@@ -44,7 +63,10 @@ export async function login(email, password, deviceType = 'tablet') {
     pending = { email, password, deviceType, duuid }
     let msg = '인증번호 요청됨'
     try {
-      const pr = await am.requestPasscode(email, password, duuid, DEVICE, DEVICE)
+      const pr = await call(am.requestPasscode, [
+        [email, password, duuid, DEVICE, DEVICE],
+        [email, password, duuid],
+      ])
       if (pr &amp;&amp; pr.message) msg = pr.message
     } catch (e) { msg = String(e.message || e) }
     return { ok: false, needPasscode: true, status, message: msg }
@@ -57,7 +79,10 @@ export async function passcode(code) {
   const { email, password, deviceType, duuid } = pending
   const am = await auth()
   try {
-    const rg = await am.registerDevice(email, password, code, duuid, DEVICE, DEVICE)
+    const rg = await call(am.registerDevice, [
+      [email, password, code, duuid, DEVICE, DEVICE],
+      [email, password, code, duuid],
+    ])
     if (rg &amp;&amp; rg.status !== undefined &amp;&amp; rg.status !== 0) {
       return { ok: false, status: rg.status, message: rg.message || '기기 등록 실패' }
     }
