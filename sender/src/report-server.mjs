@@ -22,7 +22,7 @@ function keyOf() {
 
 function send(res, code, body, type) {
   res.writeHead(code, { 'content-type': type || 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-  res.end(typeof body === 'string' ? body : JSON.stringify(body))
+  res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body))
 }
 
 function readBody(req) {
