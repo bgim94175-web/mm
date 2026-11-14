@@ -183,6 +183,13 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
+  // BLSPAMS 바디 BSON hex 덤프 — frida 캡처와 비교
+  if (p === '/report/msg-dump' && req.method === 'POST') {
+    const b = await readBody(req)
+    const r = await MSG.dumpBytes(b)
+    return send(res, 200, r)
+  }
+
   // 둘러보기 — 봇이 로그인한 방 목록
   if (p === '/report/rooms') {
     if (!LOCO.ready()) {

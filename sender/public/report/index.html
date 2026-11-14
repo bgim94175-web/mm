@@ -94,7 +94,7 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <button onclick="go('msg')">메서드 찾기</button>
     <button class="p" onclick="go('msgfire')">메시지 발사</button>
   </div>
-  <div class="row"><button onclick="shape()">BLSPAMS 바디 변형 탐색</button></div>
+  <div class="row"><button onclick="shape()">BLSPAMS 바디 변형 탐색</button><button onclick="dump()">BSON hex 덤프</button></div>
 
   <h2>raw LOCO (운영자 전용)</h2>
   <label>method</label>
@@ -265,6 +265,15 @@ async function pickMsg(chatId, logId, authorId, m) {
     }
     $('out').textContent = '자동 채움 완료 → c=' + chatId + ' · l=' + logId + ' · uid=' + authorId + '\n이제 [메서드 찾기] 를 눌러.'
   } catch (e) { pb.textContent = '오픈프로필 실패: ' + e.message }
+}
+async function dump() {
+  if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
+  $('out').textContent = '덤프 중…'
+  try {
+    const j = await post('/report/msg-dump', pickedCtx)
+    if (!j.ok) { $('out').textContent = j.text || '실패'; return }
+    $('out').textContent = '바이트 ' + j.byteLen + 'B · BSON hex:\n\n' + j.pretty + '\n\n' + j.hint
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
 }
 async function shape() {
   save()

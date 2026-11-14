@@ -205,6 +205,40 @@ export async function probeShape(ctx) {
   }
 }
 
+// BLSPAMS 바디의 실제 BSON 바이트를 hex 로 돌려준다. frida 캡처와 바이트 단위 비교용.
+export async function dumpBytes(ctx) {
+  const { chatId, logId, authorId, message } = ctx || {}
+  if (!chatId || !logId || !authorId) return { ok: false, text: 'chatId · logId · authorId 필요' }
+  const L = await longOf()
+  const BSON = await import('bson')
+  const body = {
+    st: 3,
+    c: L.fromString(String(chatId)),
+    ls: [L.fromString(String(logId))],
+    ss: [L.fromString(String(authorId))],
+    lds: [typeof message === 'string' && message ? message : TEXT[0]],
+    lts: [1],
+    sr: 0,
+    bi: false,
+  }
+  const buf = BSON.serialize(body)
+  const hex = Buffer.from(buf).toString('hex')
+  const chunks = []
+  for (let i = 0; i < hex.length; i += 32) chunks.push(hex.slice(i, i + 32))
+  return {
+    ok: true,
+    byteLen: buf.length,
+    hex,
+    pretty: chunks.join('\n'),
+    fieldTypes: {
+      st: 'int32(0x10)', c: 'long/int64(0x12)', ls: 'array<int64>(0x04)',
+      ss: 'array<int64>(0x04)', lds: 'array<string>(0x04)', lts: 'array<int32>(0x04)',
+      sr: 'int32(0x10)', bi: 'bool(0x08)',
+    },
+    hint: '첫 4바이트=총길이(LE), 각 필드=타입바이트(0x10 int32, 0x12 int64, 0x04 array, 0x02 string, 0x08 bool) + 키 + 값. 앱 frida 캡처와 비교.',
+  }
+}
+
 // 운영자가 직접 임의 LOCO 메서드·바디를 때려 보는 raw 엔드포인트. {method, body} 받아서 서버 응답을 그대로.
 // body 안에 __long: [{field: value}] 식으로 넣으면 그 필드만 Long 으로 감싼다.
 export async function raw(method, body) {
