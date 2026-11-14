@@ -19,7 +19,7 @@ export const CATEGORIES = [
   'PROTECTCHILD', 'VIOLENT', 'ILLEGAL', 'PRIVACY', 'YOUTH_UNSUITABLE', 'ETC',
 ]
 
-const GAP = 1500
+const GAP = 400
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 function authHeader() {
@@ -62,7 +62,7 @@ export function buildBody(ctx, category) {
   }
 }
 
-async function hit(body, { timeoutMs = 8000, host = HOST } = {}) {
+async function hit(body, { timeoutMs = 4000, host = HOST } = {}) {
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
@@ -95,20 +95,20 @@ export async function reportOne(ctx, category) {
   }
 }
 
-// 12개 카테고리 전부 때려서 어느 게 접수되는지 (한 번씩, GAP 간격)
+// 12개 카테고리 전부 — 3개씩 병렬로 4묶음 (전체 ~5초). Safari fetch 타임아웃 안 걸림.
 export async function fireAll(ctx) {
   if (!ctx || !ctx.chatId || !ctx.logId || !ctx.authorId) return { ok: false, text: 'chatId · logId · authorId 필요' }
-  const rows = []
-  let accepted = 0
-  let acceptedCats = []
-  for (const cat of CATEGORIES) {
-    const r = await reportOne(ctx, cat)
-    rows.push(cat + ' → http=' + r.http + (r.status != null ? '/s=' + r.status : '') + (r.text ? ' "' + r.text.slice(0, 80) + '"' : ''))
-    console.log('openchat fireAll ' + JSON.stringify(r))
-    if (r.ok) { accepted += 1; acceptedCats.push(cat) }
-    await sleep(GAP)
+  const results = []
+  const BATCH = 3
+  for (let i = 0; i < CATEGORIES.length; i += BATCH) {
+    const chunk = CATEGORIES.slice(i, i + BATCH)
+    const rs = await Promise.all(chunk.map((cat) => reportOne(ctx, cat)))
+    rs.forEach((r) => { results.push(r); console.log('openchat fireAll ' + JSON.stringify(r)) })
+    if (i + BATCH < CATEGORIES.length) await sleep(GAP)
   }
-  return { ok: accepted > 0, accepted, acceptedCats, rows, text: '접수 ' + accepted + '/' + CATEGORIES.length + ' [' + acceptedCats.join(',') + ']\n' + rows.join('\n') }
+  const rows = results.map((r) => r.category + ' → http=' + r.http + (r.status != null ? '/s=' + r.status : '') + (r.text ? ' "' + String(r.text).slice(0, 80) + '"' : ''))
+  const acceptedCats = results.filter((r) => r.ok).map((r) => r.category)
+  return { ok: acceptedCats.length > 0, accepted: acceptedCats.length, acceptedCats, rows, text: '접수 ' + acceptedCats.length + '/' + CATEGORIES.length + ' [' + acceptedCats.join(',') + ']\n' + rows.join('\n') }
 }
 
 // --- 호환성: 예전 UI 가 부르던 엔드포인트 유지 ---
