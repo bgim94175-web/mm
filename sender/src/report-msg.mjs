@@ -117,8 +117,7 @@ export async function fire(chatId, logIds, targetId, text, method) {
   }
 }
 
-// BLSPAMS 바디 변형 탐색: li(오픈링크 id) · lds(원문 그대로) · at(sendAt) 조합을 바꿔가며
-// 어느 바디가 body.status=0 을 돌려주는지 본다. sr=0 로 고정.
+// BLSPAMS 바디 변형 탐색. 11개 → 7개로 줄이고 간격도 400ms 로 → 총 ~5초. 각 요청 10초 타임아웃.
 export async function probeShape(ctx) {
   if (!ready()) return { ok: false, text: 'LOCO 세션 없음' }
   const { chatId, logId, authorId, linkId, sendAt, message } = ctx || {}
@@ -132,44 +131,52 @@ export async function probeShape(ctx) {
   const orig = typeof message === 'string' ? message : ''
 
   const base = { st: 3, c, ls, ss, lds: [TEXT[0]], lts: [1], sr: 0, bi: false }
+  // 가장 가능성 큰 7개만. 10초 안 끝남.
   const variants = [
-    { tag: 'baseline', body: { ...base } },
-    { tag: '+li', body: { ...base, li } },
+    { tag: '+li+at+orig', body: li ? { ...base, li, at: [at], lds: [orig || TEXT[0]] } : null },
+    { tag: '+li', body: li ? { ...base, li } : null },
     { tag: '+orig(lds)', body: { ...base, lds: [orig || TEXT[0]] } },
     { tag: '+at', body: { ...base, at: [at] } },
-    { tag: '+li+orig', body: { ...base, li, lds: [orig || TEXT[0]] } },
-    { tag: '+li+at', body: { ...base, li, at: [at] } },
-    { tag: '+li+at+orig', body: { ...base, li, at: [at], lds: [orig || TEXT[0]] } },
     { tag: 'st=0', body: { ...base, st: 0 } },
-    { tag: 'st=1', body: { ...base, st: 1 } },
     { tag: 'no-bi', body: (() => { const b = { ...base }; delete b.bi; return b })() },
     { tag: 'minimal{c,ls,sr}', body: { c, ls, sr: 0 } },
-  ].filter((v) => v.tag.indexOf('+li') === -1 || li)  // li 없으면 li 변형 건너뜀
+  ].filter((v) => v.body)
+
+  const GAP_FAST = 400
+  const sendWithTimeout = async (body) => {
+    return Promise.race([
+      send('BLSPAMS', body),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout 10s')), 10000)),
+    ])
+  }
 
   const rows = []
   let winner = null
   for (const v of variants) {
     try {
-      const r = await send('BLSPAMS', v.body)
+      const r = await sendWithTimeout(v.body)
       const bs = r && r.body && typeof r.body.status === 'number' ? r.body.status : null
       const keys = r && r.body ? Object.keys(r.body) : []
-      const tag = v.tag + ':' + (r && r.statusCode) + '/b=' + bs + (keys.length ? '(' + keys.join(',') + ')' : '')
-      rows.push(tag)
-      console.log('BLSPAMS shape ' + v.tag + ' -> ' + JSON.stringify({ st: r && r.statusCode, body: r && r.body }))
+      rows.push(v.tag + ':' + (r && r.statusCode) + '/b=' + bs + (keys.length ? '(' + keys.join(',') + ')' : ''))
       if (bs === 0 && !winner) winner = { tag: v.tag, body: v.body }
     } catch (e) {
-      rows.push(v.tag + ':ERR ' + (e && e.message ? e.message : e).slice(0, 60))
+      rows.push(v.tag + ':ERR ' + String(e && e.message ? e.message : e).slice(0, 60))
     }
-    await sleep(GAP)
+    await sleep(GAP_FAST)
   }
   if (winner) {
     return { ok: true, winner: winner.tag, rows, text: '★ 통과 변형=' + winner.tag + '\n' + rows.join('\n') }
   }
+  const allSame301 = rows.every((r) => r.indexOf('/b=-301') > -1)
   return {
     ok: false, rows,
     text: '모든 변형 거부\n' + rows.join('\n')
-      + '\n\n전부 -301 이면: 봇 계정 신고 권한 없음(안드로이드 서브디바이스 제약) 또는 추가 필드 필요.'
-      + '\n다른 코드(-4042, -302) 섞여 있으면 그 변형이 가까움.',
+      + (allSame301
+          ? '\n\n★ 전부 -301 → 바디 문제 아님. 가장 유력한 원인:\n'
+            + '  1) 해외 계정: 카카오가 한국 오픈챗 신고를 막음\n'
+            + '  2) 안드로이드 서브디바이스(태블릿 슬롯) 신고 권한 없음 — PC 로 다시 로그인 시도\n'
+            + '  3) 봇 계정이 그 방에 신고 권한 없는 상태 (ex. 봇 자신)'
+          : '\n\n다른 코드(-4042, -302, -303) 섞여 있으면 그 변형이 정답에 가까움.'),
   }
 }
 
