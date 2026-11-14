@@ -25,10 +25,11 @@ async function longOf() {
 }
 
 function fmtResp(r) {
-  if (!r) return { st: 'NULL' }
+  if (!r) return { st: 'NULL', bs: null }
   const b = r.body || {}
   const keys = Object.keys(b)
-  return { st: r.statusCode, bodyKeys: keys, body: keys.length ? b : null }
+  const bs = typeof b.status === 'number' ? b.status : null
+  return { st: r.statusCode, bs, bodyKeys: keys, body: keys.length ? b : null }
 }
 
 function errRow(e) {
@@ -57,46 +58,63 @@ async function callOne(method, L, chatId, logIds, targetIds, datas, types, sr) {
   }
 }
 
-// 후보 메서드 다 때려본다. -300(없는 명령) 이 아닌 답 하나라도 있으면 그 메서드가 산다.
-// st=0 이면 성공. 그 외는 바디·상태코드 전부 돌려서 사용자가 보고 판단.
+// 후보 메서드 다 때려본다. 성공 판정 = LOCO st==0 AND body.status==0 둘 다.
+// 어떤 메서드가 "살아있는지" (-300 아님) 와 "바디까지 접수됐는지" (body.status==0) 를 분리해서 본다.
 export async function probe(chatId, logId, targetId) {
   if (!ready()) return { ok: false, text: 'LOCO 세션 없음 — 로그인부터' }
   const L = await longOf()
   const rows = []
+  const livingMethods = []
+  let winner = null
   for (const method of CANDIDATE_METHODS) {
     const r = await callOne(method, L, chatId, [logId], [targetId], [TEXT[0]], [1], 0)
-    const tag = method + ':' + r.st + (r.bodyKeys && r.bodyKeys.length ? '(' + r.bodyKeys.join(',') + ')' : '')
-    rows.push(tag)
+    const bsTag = r.bs != null ? '/b=' + r.bs : ''
+    const keyTag = r.bodyKeys && r.bodyKeys.length ? '(' + r.bodyKeys.join(',') + ')' : ''
+    rows.push(method + ':' + r.st + bsTag + keyTag)
     console.log('report probe ' + method + ' -> ' + JSON.stringify(r))
     await sleep(GAP)
     if (r.st === 0) {
-      return { ok: true, method, rows, text: '성공 메서드=' + method + '\n' + rows.join(' · '), lastBody: r.body }
+      livingMethods.push({ method, bs: r.bs, body: r.body })
+      if (r.bs === 0 && !winner) winner = { method, body: r.body }
     }
   }
-  // 하나도 성공 못 하면 -300 아닌 것(=메서드는 있다)만 추려 보여준다
-  const alive = rows.filter((x) => !x.includes(':-300') && !x.includes(':ERR'))
-  const hint = alive.length
-    ? '살아있는 메서드: ' + alive.join(' · ') + ' (바디 조정 필요)'
-    : '모든 후보 메서드 서버가 거부 — 다른 메서드명 필요'
-  return { ok: false, rows, text: '전부 실패\n' + rows.join(' · ') + '\n→ ' + hint }
+  if (winner) {
+    return { ok: true, method: winner.method, rows, text: '진짜 성공 메서드=' + winner.method + ' (body.status=0)\n' + rows.join(' · '), lastBody: winner.body }
+  }
+  const living = livingMethods.map((m) => m.method + '(body.status=' + m.bs + ')')
+  const hint = living.length
+    ? '메서드는 서버가 받아 줌 — 바디·sr·대상 조정 필요: ' + living.join(' · ')
+    : '어떤 후보 메서드도 서버가 모름(-300) — 메서드명 자체가 틀림'
+  return {
+    ok: false, livingMethods: livingMethods.map((m) => m.method), rows,
+    text: '전송 성공, 접수 실패\n' + rows.join(' · ') + '\n→ ' + hint
+      + '\n\n팁: -301=중복/자기 자신/전제 부족, -302=권한 없음, -4042=없는 리소스. 다른 사람 글로 다시.',
+    lastBody: livingMethods[0] && livingMethods[0].body,
+  }
 }
 
-// 메시지 발사 — 확정된 메서드 하나로 sr0~5 전체 쏘기. (method 인자 안 주면 BLSPAMS 기본)
+// 메시지 발사 — 확정된 메서드 하나로 sr0~5 전체 쏘기. 성공=body.status==0.
 export async function fire(chatId, logIds, targetId, text, method) {
   if (!ready()) return { ok: false, text: 'LOCO 세션 없음 — 로그인부터' }
   const m = String(method || 'BLSPAMS')
   const L = await longOf()
   const rows = []
+  let accepted = 0
   for (const sr of REASONS) {
     const datas = text ? logIds.map(() => text) : logIds.map(() => TEXT[sr])
     const types = logIds.map(() => 1)
     const r = await callOne(m, L, chatId, logIds, logIds.map(() => targetId), datas, types, sr)
-    rows.push('sr' + sr + 'x' + logIds.length + ':' + r.st)
+    const bsTag = r.bs != null ? '/b=' + r.bs : ''
+    rows.push('sr' + sr + 'x' + logIds.length + ':' + r.st + bsTag)
+    if (r.st === 0 && r.bs === 0) accepted += 1
     console.log('report fire ' + m + ' sr=' + sr + ' n=' + logIds.length + ' -> ' + JSON.stringify(r))
     await sleep(GAP)
   }
-  const ok = rows.filter((x) => x.endsWith(':0')).length
-  return { ok: ok > 0, method: m, count: ok, rows, text: '접수 ' + ok + '/' + rows.length + ' (method=' + m + ')\n' + rows.join(' · ') }
+  return {
+    ok: accepted > 0, method: m, count: accepted, rows,
+    text: '실제 접수 ' + accepted + '/' + rows.length + ' (method=' + m + ')\n' + rows.join(' · ')
+      + (accepted === 0 ? '\n\n팁: body=-301 중복/자기 자신, -302 권한 없음. 다른 사람 글로.' : ''),
+  }
 }
 
 // 운영자가 직접 임의 LOCO 메서드·바디를 때려 보는 raw 엔드포인트. {method, body} 받아서 서버 응답을 그대로.
