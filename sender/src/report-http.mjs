@@ -1,4 +1,4 @@
-// 프로필 신고 HTTP GET /talk/profile25/report/{slug}
+// 프로필 신고 HTTP POST /talk/profile25/report/{slug}
 import { get as getCred } from './report-auth.mjs'
 
 export const HOSTS = ['https://talk.kakao.com', 'https://katalk.kakao.com', 'https://dn-m.talk.kakao.com']
@@ -22,7 +22,7 @@ function headersOf() {
 
 async function hit(host, slug, body) {
   const r = await fetch(`${host}/talk/profile25/report/${slug}`, {
-    method: 'GET', headers: headersOf(), body: JSON.stringify(body),
+    method: 'POST', headers: headersOf(), body: JSON.stringify(body),
   })
   let j = null
   try { j = await r.json() } catch {}
