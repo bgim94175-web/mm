@@ -1,8 +1,0 @@
-{
-  "name": "report-console",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "engines": { "node": "&gt;=20" },
-  "dependencies": { "agent-messenger": "^2.36.1" }
-}
