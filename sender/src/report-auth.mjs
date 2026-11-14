@@ -1,28 +1,29 @@
-// 콘솔 로그인 — HTTP 로그인만. LOCO 세션 안 만든다
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+// 콘솔 로그인 — HTTP 로그인만. LOCO 세션 안 만든다.
+// 자격증명은 DATABASE_URL 이 있으면 Postgres(Neon), 없으면 로컬 파일.
 import { randomUUID } from 'node:crypto'
+import * as DB from './report-db.mjs'
 
 const LIB = 'agent-messenger/dist/src/platforms/kakaotalk/auth/kakao-login.js'
 const LIB_REL = '../node_modules/agent-messenger/dist/src/platforms/kakaotalk/auth/kakao-login.js'
-const DATA = join(process.cwd(), 'data', 'report')
-const FILE = join(DATA, 'console-auth.json')
 
-let cred = null
+let cred = null  // 메모리 캐시 — 부팅 후 preload() 로 채워짐
 let pending = null
 
-function load() {
-  if (cred) return cred
-  try { cred = JSON.parse(readFileSync(FILE, 'utf8')) } catch {}
+export async function preload() {
+  try { cred = await DB.loadCred() } catch (e) { console.log('[auth] preload 실패: ' + (e && e.message)); cred = null }
   return cred
 }
-function save(c) {
-  mkdirSync(DATA, { recursive: true })
-  writeFileSync(FILE, JSON.stringify(c))
+
+async function save(c) {
   cred = c
+  try { await DB.saveCred(c) } catch (e) { console.log('[auth] 저장 실패: ' + (e && e.message)) }
 }
-export const get = () => load()
-export function clear() { cred = null; pending = null; try { writeFileSync(FILE, '{}') } catch {} }
+
+export const get = () => cred
+export async function clear() {
+  cred = null; pending = null
+  try { await DB.clearCred() } catch (e) {}
+}
 
 async function auth() {
   try { return await import(LIB) } catch {}
@@ -31,11 +32,11 @@ async function auth() {
 
 export async function login(email, password, deviceType = 'tablet') {
   if (!email || !password) return { ok: false, message: '아이디·비번 필요' }
-  const prev = load()
+  const prev = cred
   const duuid = (prev && prev.duuid) || randomUUID().replace(/-/g, '')
   // duuid는 로그인→패스코드→기기등록→재로그인 전 과정에서 같아야 한다.
   // 성공 전에도 즉시 저장해 매 시도마다 새 기기가 생기는 무한 루프를 막는다.
-  if (!prev || !prev.duuid) save({ duuid })
+  if (!prev || !prev.duuid) await save({ duuid })
   const am = await auth()
 
   let r
@@ -46,7 +47,7 @@ export async function login(email, password, deviceType = 'tablet') {
   if (r && r.authenticated && r.credentials) {
     const uid = String(r.user_id || r.account_id || r.credentials.user_id || '')
     if (!uid) return { ok: false, message: '로그인 성공했지만 userId 가 비어 있음 (서버 응답 이상)' }
-    save({
+    await save({
       oauthToken: r.credentials.access_token,
       refreshToken: r.credentials.refresh_token || '',
       userId: uid, duuid, email, deviceType,
@@ -88,7 +89,7 @@ export async function passcode(code) {
 }
 
 export function me() {
-  const c = load()
+  const c = cred
   if (!c || !c.oauthToken) return { loggedIn: false }
   return {
     loggedIn: true,

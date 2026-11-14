@@ -139,6 +139,15 @@ APK 26.8.3 재확인 결과 (사용자가 넘김):
 SW 캐시 현재 버전: `rp-v16` (`sender/public/report/sw.js`).
 배포 대상 브랜치: Render 가 `feat/report-console` 감시 (환경: `mm-iwo1.onrender.com`).
 
+## 6. 지속성 (2026-11-14 추가)
+
+- `sender/src/report-db.mjs` — Neon Postgres 자격증명 저장소
+- `DATABASE_URL` 환경변수 있으면 Postgres, 없으면 로컬 파일(ephemeral)
+- 서버 부팅 시 자동 `preload()` → 저장된 토큰 있으면 `LOCO.connect()` 자동 시도
+- 테이블: `report_auth(id, oauth_token, refresh_token, user_id, duuid, email, device_type, updated_at)`
+- `/me` 응답에 `dbBackend: "pg" | "file"` 추가, UI 에 🐘 Neon / 💾 file 표시
+- Neon 세팅: console.neon.tech → New Project → connection string → Render env `DATABASE_URL` 로 붙여넣기
+
 ## 5. 세션 넘어온 사람에게 — 할 일 (우선순위)
 
 1. 이 문서 다 읽기

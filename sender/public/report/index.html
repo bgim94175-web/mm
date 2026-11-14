@@ -167,7 +167,8 @@ async function refreshMe() {
     const j = JSON.parse(text)
     if (!j.loggedIn) { $('login').classList.remove('hide'); $('app').classList.add('hide'); return }
     const loco = j.loco === 'O' ? '🟢' : '🔴' + (j.locoError ? ' ' + j.locoError : '')
-    $('me').textContent = '로그인됨 · ' + j.email + ' · uid ' + j.userId + ' · LOCO ' + loco
+    const db = j.dbBackend === 'pg' ? '🐘 Neon' : '💾 file'
+    $('me').textContent = '로그인됨 · ' + j.email + ' · uid ' + j.userId + ' · LOCO ' + loco + ' · ' + db
   } catch (e) { $('me').textContent = '상태 조회 실패: ' + e.message }
 }
 async function locoReconnect() {

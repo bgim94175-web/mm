@@ -3,5 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "dependencies": { "agent-messenger": "^2.36.1" }
+  "dependencies": {
+    "agent-messenger": "^2.36.1",
+    "pg": "^8.23.1"
+  }
 }

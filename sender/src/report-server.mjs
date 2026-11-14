@@ -8,6 +8,7 @@ import * as LOCO from './report-loco.mjs'
 import * as MSG from './report-msg.mjs'
 import * as BROWSE from './report-browse.mjs'
 import * as OPEN from './report-openchat.mjs'
+import * as DB from './report-db.mjs'
 
 const PORT = Number(process.env.PORT || 8080)
 const PUB = join(process.cwd(), 'public', 'report')
@@ -78,6 +79,7 @@ async function handle(req, res) {
     const m = AUTH.me()
     m.loco = LOCO.ready() ? 'O' : 'X'
     if (!LOCO.ready() && LOCO.error()) m.locoError = LOCO.error()
+    m.dbBackend = DB.status().backend
     return send(res, 200, m)
   }
   if (p === '/report/status') {
@@ -128,7 +130,7 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
   if (p === '/report/logout' && req.method === 'POST') {
-    AUTH.clear()
+    await AUTH.clear()
     LOCO.close()
     return send(res, 200, { ok: true })
   }
@@ -262,6 +264,20 @@ const server = createServer(function (req, res) {
   })
 })
 
-server.listen(PORT, function () {
-  console.log('report console on :' + PORT)
-})
+async function bootAndListen() {
+  try { await DB.init() } catch (e) { console.log('[db] init 실패: ' + (e && e.message)) }
+  try {
+    const prev = await AUTH.preload()
+    if (prev && prev.oauthToken) {
+      console.log('[auth] 저장된 토큰 로드됨 uid=' + (prev.userId || '-'))
+      try { await LOCO.connect() ; console.log('[loco] 자동 재연결 OK') }
+      catch (e) { console.log('[loco] 자동 재연결 실패(계정 유효성 확인 필요): ' + (e && e.message)) }
+    } else {
+      console.log('[auth] 저장된 토큰 없음 — 웹에서 로그인 필요')
+    }
+  } catch (e) { console.log('[boot] preload 실패: ' + (e && e.message)) }
+  server.listen(PORT, function () {
+    console.log('report console on :' + PORT + ' / backend=' + DB.status().backend)
+  })
+}
+bootAndListen()
