@@ -16,17 +16,22 @@ export function close() {
 }
 
 export async function connect(email, password, deviceType) {
+  const c = AUTH.get()
+  if (!c || !c.oauthToken) throw new Error('HTTP 로그인이 먼저 필요하다')
   let mod
   try { mod = await import(LIB) } catch (e) { mod = await import(new URL(LIB_REL, import.meta.url).href) }
   const C = mod.default || mod.KakaoTalkClient || Object.values(mod).find(function (v) { return typeof v === 'function' })
   if (!C) throw new Error('client 클래스 없음')
-  const c = AUTH.get()
   const client = new C()
   session = await client.login({
-    email: email,
-    password: password,
+    email: email || c.email,
+    password: password || '',
+    oauthToken: c.oauthToken,
+    accessToken: c.oauthToken,
+    refreshToken: c.refreshToken || '',
+    userId: c.userId,
     deviceType: deviceType === 'pc' ? 'pc' : 'tablet',
-    deviceUuid: c && c.duuid,
+    deviceUuid: c.duuid,
     deviceName: 'SM-X710',
     modelName: 'SM-X710',
   })
