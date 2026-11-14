@@ -1,0 +1,7 @@
+{
+  "name": "report-console",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": { "agent-messenger": "^2.36.1" }
+}
