@@ -17,7 +17,7 @@ const MIME = {
 process.on('unhandledRejection', (e) => console.error('unhandledRejection', e))
 process.on('uncaughtException', (e) => console.error('uncaughtException', e))
 
-let busy = false
+let chain = Promise.resolve()
 
 function keyOf() {
   return process.env.SENDER_REPORT_API_KEY || ''
@@ -84,17 +84,14 @@ async function handle(req, res) {
   if (p === '/report/host' || p === '/report/slugs' || p === '/report/fire') {
     const uid = String(u.searchParams.get('uid') || '')
     if (!uid) return send(res, 400, { ok: false, error: 'uid' })
-    if (busy) return send(res, 429, { ok: false, error: 'busy' })
-    busy = true
-    try {
-      let r
-      if (p === '/report/host') r = await RH.probeHost(uid)
-      else if (p === '/report/slugs') r = await RH.probeSlugs(uid)
-      else r = await RH.fire(uid, String(u.searchParams.get('text') || ''))
-      return send(res, 200, r)
-    } finally {
-      busy = false
-    }
+    const text = String(u.searchParams.get('text') || '')
+    const next = chain.then(() => {
+      if (p === '/report/host') return RH.probeHost(uid)
+      if (p === '/report/slugs') return RH.probeSlugs(uid)
+      return RH.fire(uid, text)
+    })
+    chain = next.catch(() => {})
+    return send(res, 200, await next)
   }
 
   send(res, 404, { ok: false })

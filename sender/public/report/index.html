@@ -115,17 +115,22 @@ async function doLogout() {
   await post('/report/logout', {})
   $('app').classList.add('hide'); $('login').classList.remove('hide'); $('loginOut').classList.add('hide')
 }
+function lock(on) { document.querySelectorAll('.g button').forEach((b) => { b.disabled = on; b.style.opacity = on ? '0.4' : '' }) }
 async function go(what) {
   save()
   const uid = $('uid').value.trim()
   if (what !== 'status' && !uid) { $('out').textContent = 'userId 필요'; return }
   const p = new URLSearchParams({ k: $('k').value, uid })
   if (what === 'fire') p.set('text', $('txt').value)
+  const t0 = Date.now()
   $('out').textContent = '요청 중…'
+  lock(true)
+  const tick = setInterval(() => { $('out').textContent = '요청 중… ' + ((Date.now() - t0) / 1000).toFixed(1) + 's' }, 200)
   try {
     const r = await fetch('/report/' + what + '?' + p)
     $('out').textContent = JSON.stringify(await r.json(), null, 1)
   } catch (e) { $('out').textContent = '실패: ' + e.message }
+  finally { clearInterval(tick); lock(false) }
 }
 function share() {
   const t = $('out').textContent
