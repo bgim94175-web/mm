@@ -93,7 +93,7 @@ async function handle(req, res) {
     const r = await AUTH.passcode(String(b.code || ''))
     if (r.ok) {
       const c = AUTH.get()
-      try { await LOCO.connect(c && c.email, '', c && c.deviceType) }
+      try { await LOCO.connect(c && c.email, String(b.password || ''), c && c.deviceType) }
       catch (e) { console.log('loco 재연결 실패: ' + (e && e.message)) }
     }
     return send(res, 200, r)

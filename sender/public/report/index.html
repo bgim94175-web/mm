@@ -110,7 +110,7 @@ async function doLogin() {
 async function doPass() {
   $('loginOut').textContent = '확인 중…'
   try {
-    const j = await post('/report/passcode', { code: $('code').value.trim() })
+    const j = await post('/report/passcode', { code: $('code').value.trim(), password: $('pw').value })
     $('loginOut').textContent = j.message || JSON.stringify(j, null, 1)
     if (j.ok) return enter()
   } catch (e) { $('loginOut').textContent = '실패: ' + e.message }
