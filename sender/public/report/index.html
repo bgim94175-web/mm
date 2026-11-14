@@ -96,6 +96,15 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   </div>
   <div class="row"><button onclick="shape()">BLSPAMS 바디 변형 탐색</button><button onclick="dump()">BSON hex 덤프</button></div>
 
+  <h2>오픈채팅 HTTP 신고 (POST c/fraud/report/chatLogs)</h2>
+  <label>호스트 (비우면 자동 탐색)</label>
+  <input id="ocHost" placeholder="https://talk.kakao.com ...">
+  <div class="g">
+    <button onclick="ocHosts()">호스트 찾기</button>
+    <button onclick="ocShapes()">바디 변형 찾기</button>
+  </div>
+  <div class="row"><button class="p" onclick="ocFire()">오픈챗 발사 (sr 0~5)</button></div>
+
   <h2>raw LOCO (운영자 전용)</h2>
   <label>method</label>
   <input id="rawM" placeholder="PING · CHATINFO · WRITE ...">
@@ -111,8 +120,8 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
 const $ = (id) => document.getElementById(id)
 const st = JSON.parse(localStorage.getItem('rp5') || '{}')
 $('k').value = st.k || ''; $('email').value = st.email || ''; $('uid').value = st.uid || ''; $('txt').value = st.txt || ''; $('c').value = st.c || ''; $('l').value = st.l || ''
-$('mth').value = st.mth || ''; $('rawM').value = st.rawM || ''; $('rawB').value = st.rawB || ''
-const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value }))
+$('mth').value = st.mth || ''; $('rawM').value = st.rawM || ''; $('rawB').value = st.rawB || ''; $('ocHost').value = st.ocHost || ''
+const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value, ocHost: $('ocHost').value }))
 const q = () => '?k=' + encodeURIComponent($('k').value)
 
 async function post(path, body) {
@@ -265,6 +274,35 @@ async function pickMsg(chatId, logId, authorId, m) {
     }
     $('out').textContent = '자동 채움 완료 → c=' + chatId + ' · l=' + logId + ' · uid=' + authorId + '\n이제 [메서드 찾기] 를 눌러.'
   } catch (e) { pb.textContent = '오픈프로필 실패: ' + e.message }
+}
+async function ocHosts() {
+  if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
+  $('out').textContent = '오픈챗 호스트 탐색 중…'
+  try {
+    const j = await post('/report/openchat-hosts', pickedCtx)
+    $('out').textContent = j.text || JSON.stringify(j, null, 1)
+    if (j.host) $('ocHost').value = j.host
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
+}
+async function ocShapes() {
+  if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
+  const host = $('ocHost').value.trim()
+  if (!host) { $('out').textContent = '호스트 입력 또는 "호스트 찾기" 먼저'; return }
+  $('out').textContent = '오픈챗 바디 변형 탐색 중…'
+  try {
+    const j = await post('/report/openchat-shapes', { host, ctx: pickedCtx })
+    $('out').textContent = j.text || JSON.stringify(j, null, 1)
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
+}
+async function ocFire() {
+  if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
+  const host = $('ocHost').value.trim()
+  if (!host) { $('out').textContent = '호스트 입력 또는 "호스트 찾기" 먼저'; return }
+  $('out').textContent = '오픈챗 발사 중…'
+  try {
+    const j = await post('/report/openchat-fire', { host, ctx: pickedCtx })
+    $('out').textContent = j.text || JSON.stringify(j, null, 1)
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
 }
 async function dump() {
   if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }

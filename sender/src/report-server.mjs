@@ -7,6 +7,7 @@ import * as RH from './report-http.mjs'
 import * as LOCO from './report-loco.mjs'
 import * as MSG from './report-msg.mjs'
 import * as BROWSE from './report-browse.mjs'
+import * as OPEN from './report-openchat.mjs'
 
 const PORT = Number(process.env.PORT || 8080)
 const PUB = join(process.cwd(), 'public', 'report')
@@ -187,6 +188,23 @@ async function handle(req, res) {
   if (p === '/report/msg-dump' && req.method === 'POST') {
     const b = await readBody(req)
     const r = await MSG.dumpBytes(b)
+    return send(res, 200, r)
+  }
+
+  // 오픈채팅 HTTP 신고 — POST c/fraud/report/chatLogs 경로 탐색 + 발사
+  if (p === '/report/openchat-hosts' && req.method === 'POST') {
+    const b = await readBody(req)
+    const r = await queue(function () { return OPEN.probeHosts(b) })
+    return send(res, 200, r)
+  }
+  if (p === '/report/openchat-shapes' && req.method === 'POST') {
+    const b = await readBody(req)
+    const r = await queue(function () { return OPEN.probeShapes(String(b.host || ''), b.ctx || b) })
+    return send(res, 200, r)
+  }
+  if (p === '/report/openchat-fire' && req.method === 'POST') {
+    const b = await readBody(req)
+    const r = await queue(function () { return OPEN.fire(String(b.host || ''), b.ctx || b, b.reasons) })
     return send(res, 200, r)
   }
 

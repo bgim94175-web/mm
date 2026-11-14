@@ -37,7 +37,27 @@
 - 15분 대기 후 1.5초 간격으로 sr 0~5 발사 → 전부 `body.status=-301`
 - rate limit 이었으면 한두 개는 뚫렸어야 함 → 서버가 구조적으로 거부
 
-### 가설 2 — APK 생성자 재확인 (지금 1순위)
+### ★ 2026-11-14 결정적 돌파구 ★
+**오픈채팅 신고는 BLSPAMS 가 아님 — HTTP `POST c/fraud/report/chatLogs`.**
+
+APK 26.8.3 재확인 결과 (사용자가 넘김):
+- BLSPAMS 는 일반(1:1·단체) 채팅방 전용: `AbuseReportChatroomUseCase → ReportSpamAtChatRoomUseCase → LocoImpl.blSpams`
+- 오픈채팅은 별도: `OlkChatroomAbuseReportApiParams → AbuseReportViewModel.submitOlkChatroomReport → AbuseReportOlkChatroomUseCase → POST c/fraud/report/chatLogs`
+
+**→ 봇이 BLSPAMS 로 오픈챗 메시지 신고를 시도한 게 -301 의 근본 원인.** 서버가 "오픈챗은 이 경로 아니다" 로 BO 레이어에서 거부한 것.
+
+**지금 구현한 것 (`sender/src/report-openchat.mjs`, feat/report-console 브랜치):**
+- `/report/openchat-hosts` (POST) — 호스트 후보 4개 돌려서 어느 쪽이 받는지 (talk · katalk · open · dn-m)
+- `/report/openchat-shapes` (POST) — 호스트 확정된 뒤 바디 모양 5개 (shape-A~E) 변형 탐색
+- `/report/openchat-fire` (POST) — 호스트 + 바디 모양 확정 뒤 sr 0~5 발사
+- UI "오픈채팅 HTTP 신고" 섹션
+
+**미확정:**
+- 정확한 호스트 (후보 4개 중 하나)
+- 바디 모양 — `OlkChatroomAbuseReportApiParams` 의 실제 JSON 필드 이름
+- 인증 헤더 포맷 — 일단 기존 `/talk/profile25/report` 와 같은 `${oauthToken}-${duuid}` 사용
+
+### ~~가설 2 — APK 생성자 재확인~~ ✅ 완료 (위 참조)
 구글 드라이브 `카카오톡_26.8.3 (1).apk` (254MB) 또는 이미 깐 jadx 세션에서:
 - `grep -r "BLSPAMS"` 후 호출 지점 전체 (한 군데가 아닐 수 있음)
 - `BlockSpamsRequest`·`ChatReportRequest`·`SpamReport*` 류 클래스의 **생성자·정적 팩토리 메서드** 전체 — 조건부로 추가 필드 넣는 경우 확인
