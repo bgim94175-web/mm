@@ -172,6 +172,17 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
+  // BLSPAMS 바디 변형 탐색 — context 전부 받아서 여러 조합으로 쏜다
+  if (p === '/report/msg-shape' && req.method === 'POST') {
+    const b = await readBody(req)
+    if (!LOCO.ready()) {
+      try { await LOCO.connect() }
+      catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message ? e.message : e) }) }
+    }
+    const r = await queue(function () { return MSG.probeShape(b) })
+    return send(res, 200, r)
+  }
+
   // 둘러보기 — 봇이 로그인한 방 목록
   if (p === '/report/rooms') {
     if (!LOCO.ready()) {

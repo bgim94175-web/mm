@@ -117,6 +117,62 @@ export async function fire(chatId, logIds, targetId, text, method) {
   }
 }
 
+// BLSPAMS 바디 변형 탐색: li(오픈링크 id) · lds(원문 그대로) · at(sendAt) 조합을 바꿔가며
+// 어느 바디가 body.status=0 을 돌려주는지 본다. sr=0 로 고정.
+export async function probeShape(ctx) {
+  if (!ready()) return { ok: false, text: 'LOCO 세션 없음' }
+  const { chatId, logId, authorId, linkId, sendAt, message } = ctx || {}
+  if (!chatId || !logId || !authorId) return { ok: false, text: 'chatId · logId · authorId 필요' }
+  const L = await longOf()
+  const c = L.fromString(String(chatId))
+  const ls = [L.fromString(String(logId))]
+  const ss = [L.fromString(String(authorId))]
+  const li = linkId ? L.fromString(String(linkId)) : null
+  const at = Number(sendAt) || 0
+  const orig = typeof message === 'string' ? message : ''
+
+  const base = { st: 3, c, ls, ss, lds: [TEXT[0]], lts: [1], sr: 0, bi: false }
+  const variants = [
+    { tag: 'baseline', body: { ...base } },
+    { tag: '+li', body: { ...base, li } },
+    { tag: '+orig(lds)', body: { ...base, lds: [orig || TEXT[0]] } },
+    { tag: '+at', body: { ...base, at: [at] } },
+    { tag: '+li+orig', body: { ...base, li, lds: [orig || TEXT[0]] } },
+    { tag: '+li+at', body: { ...base, li, at: [at] } },
+    { tag: '+li+at+orig', body: { ...base, li, at: [at], lds: [orig || TEXT[0]] } },
+    { tag: 'st=0', body: { ...base, st: 0 } },
+    { tag: 'st=1', body: { ...base, st: 1 } },
+    { tag: 'no-bi', body: (() => { const b = { ...base }; delete b.bi; return b })() },
+    { tag: 'minimal{c,ls,sr}', body: { c, ls, sr: 0 } },
+  ].filter((v) => v.tag.indexOf('+li') === -1 || li)  // li 없으면 li 변형 건너뜀
+
+  const rows = []
+  let winner = null
+  for (const v of variants) {
+    try {
+      const r = await send('BLSPAMS', v.body)
+      const bs = r && r.body && typeof r.body.status === 'number' ? r.body.status : null
+      const keys = r && r.body ? Object.keys(r.body) : []
+      const tag = v.tag + ':' + (r && r.statusCode) + '/b=' + bs + (keys.length ? '(' + keys.join(',') + ')' : '')
+      rows.push(tag)
+      console.log('BLSPAMS shape ' + v.tag + ' -> ' + JSON.stringify({ st: r && r.statusCode, body: r && r.body }))
+      if (bs === 0 && !winner) winner = { tag: v.tag, body: v.body }
+    } catch (e) {
+      rows.push(v.tag + ':ERR ' + (e && e.message ? e.message : e).slice(0, 60))
+    }
+    await sleep(GAP)
+  }
+  if (winner) {
+    return { ok: true, winner: winner.tag, rows, text: '★ 통과 변형=' + winner.tag + '\n' + rows.join('\n') }
+  }
+  return {
+    ok: false, rows,
+    text: '모든 변형 거부\n' + rows.join('\n')
+      + '\n\n전부 -301 이면: 봇 계정 신고 권한 없음(안드로이드 서브디바이스 제약) 또는 추가 필드 필요.'
+      + '\n다른 코드(-4042, -302) 섞여 있으면 그 변형이 가까움.',
+  }
+}
+
 // 운영자가 직접 임의 LOCO 메서드·바디를 때려 보는 raw 엔드포인트. {method, body} 받아서 서버 응답을 그대로.
 // body 안에 __long: [{field: value}] 식으로 넣으면 그 필드만 Long 으로 감싼다.
 export async function raw(method, body) {

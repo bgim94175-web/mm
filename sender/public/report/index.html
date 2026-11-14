@@ -94,6 +94,7 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <button onclick="go('msg')">메서드 찾기</button>
     <button class="p" onclick="go('msgfire')">메시지 발사</button>
   </div>
+  <div class="row"><button onclick="shape()">BLSPAMS 바디 변형 탐색</button></div>
 
   <h2>raw LOCO (운영자 전용)</h2>
   <label>method</label>
@@ -196,6 +197,7 @@ async function go(what) {
   finally { clearInterval(tick); lock(false) }
 }
 function esc(s) { return String(s || '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) }
+let pickedCtx = null
 async function loadRooms() {
   const box = $('roomList'); box.classList.remove('hide'); box.innerHTML = '<div class="item">불러오는 중…</div>'
   $('msgList').classList.add('hide'); $('msgList').innerHTML = ''
@@ -206,7 +208,7 @@ async function loadRooms() {
     const rooms = Array.isArray(j.rooms) ? j.rooms : []
     if (!rooms.length) { box.innerHTML = '<div class="item">방 없음</div>'; return }
     box.innerHTML = rooms.map((rm) =>
-      '<div class="item" onclick="loadMsgs(\'' + rm.chatId + '\')">' +
+      '<div class="item" onclick="loadMsgs(\'' + rm.chatId + '\',\'' + (rm.linkId || '') + '\')">' +
         '<div class="t">' + esc(rm.typeName) + ' · ' + rm.activeMembers + '명 · ' + esc(rm.members || '(이름없음)') + '</div>' +
         '<div class="s">chat_id ' + rm.chatId + (rm.linkId ? ' · link_id ' + rm.linkId : '') + '</div>' +
         '<div class="m">' + esc(rm.preview || '(글 없음)') + '</div>' +
@@ -214,8 +216,9 @@ async function loadRooms() {
     ).join('')
   } catch (e) { box.innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
 }
-async function loadMsgs(chatId) {
+async function loadMsgs(chatId, linkId) {
   $('c').value = chatId; save()
+  pickedCtx = { chatId, linkId: linkId || '' }
   const box = $('msgList'); box.classList.remove('hide'); box.innerHTML = '<div class="item">불러오는 중…</div>'
   try {
     const r = await fetch('/report/room-msgs?c=' + encodeURIComponent(chatId) + '&cnt=15&k=' + encodeURIComponent($('k').value))
@@ -227,18 +230,28 @@ async function loadMsgs(chatId) {
       box.innerHTML = '<div class="item">메시지 없음<div class="s">' + esc(tr) + '</div></div>'
       return
     }
-    box.innerHTML = msgs.map((m) => {
+    box.innerHTML = msgs.map((m, i) => {
       const when = m.sendAt ? new Date(m.sendAt * 1000).toLocaleString('ko-KR', { hour: '2-digit', minute: '2-digit', month: 'numeric', day: 'numeric' }) : ''
-      return '<div class="item" onclick="pickMsg(\'' + chatId + '\',\'' + m.logId + '\',\'' + m.authorId + '\')">' +
+      return '<div class="item" data-i="' + i + '">' +
         '<div class="t">' + esc(when) + ' · type ' + m.type + ' · author ' + m.authorId + '</div>' +
         '<div class="s">log_id ' + m.logId + '</div>' +
         '<div class="m">' + esc(m.message || '(빈 글)') + '</div>' +
       '</div>'
     }).join('')
+    // 메시지 데이터를 전역에 저장해 클릭 시 꺼낼 수 있게 (문자열 이스케이프 지옥 회피)
+    window.__msgs = msgs
+    Array.from(box.querySelectorAll('.item')).forEach((el) => {
+      el.addEventListener('click', () => {
+        const i = Number(el.dataset.i)
+        const m = window.__msgs[i]
+        if (m) pickMsg(chatId, m.logId, m.authorId, m)
+      })
+    })
   } catch (e) { box.innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
 }
-async function pickMsg(chatId, logId, authorId) {
+async function pickMsg(chatId, logId, authorId, m) {
   $('c').value = chatId; $('l').value = logId; $('uid').value = authorId; save()
+  pickedCtx = Object.assign(pickedCtx || {}, { chatId, logId, authorId, sendAt: m && m.sendAt || 0, message: m && m.message || '' })
   $('out').textContent = '자동 채움 완료 → c=' + chatId + ' · l=' + logId + ' · uid=' + authorId + '\n오픈프로필 확인 중…'
   const pb = $('profBox'); pb.classList.remove('hide'); pb.textContent = '오픈프로필 조회 중…'
   try {
@@ -252,6 +265,18 @@ async function pickMsg(chatId, logId, authorId) {
     }
     $('out').textContent = '자동 채움 완료 → c=' + chatId + ' · l=' + logId + ' · uid=' + authorId + '\n이제 [메서드 찾기] 를 눌러.'
   } catch (e) { pb.textContent = '오픈프로필 실패: ' + e.message }
+}
+async function shape() {
+  save()
+  if (!pickedCtx || !pickedCtx.logId || !pickedCtx.authorId) {
+    $('out').textContent = '방 목록 → 메시지 탭 먼저 (linkId / sendAt / 원문 자동 수집됨)'
+    return
+  }
+  $('out').textContent = 'BLSPAMS 변형 탐색 중… (10~15초)'
+  try {
+    const j = await post('/report/msg-shape', pickedCtx)
+    $('out').textContent = j.text || JSON.stringify(j, null, 1)
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
 }
 async function raw() {
   save()
