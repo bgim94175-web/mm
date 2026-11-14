@@ -13,6 +13,7 @@
 *{box-sizing:border-box}
 body{margin:0;font:15px/1.5 -apple-system,sans-serif;background:#111;color:#eee;padding:16px 16px 32px}
 h1{font-size:17px;margin:0 0 12px}
+h2{font-size:14px;margin:22px 0 6px;color:#9ab}
 label{display:block;font-size:12px;color:#999;margin:12px 0 4px}
 input,select{width:100%;padding:11px;border-radius:10px;border:1px solid #333;background:#1b1b1b;color:#eee;font-size:16px}
 button{padding:14px;border-radius:10px;border:0;background:#2a2a2a;color:#eee;font-size:15px;font-weight:600}
@@ -61,11 +62,22 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   <label>주입할 문장 (선택)</label>
   <input id="txt" placeholder="비우면 기본 문장">
 
+  <h2>프로필 신고</h2>
   <div class="g">
     <button onclick="go('status')">상태</button>
     <button onclick="go('host')">호스트</button>
     <button onclick="go('slugs')">사유 12종</button>
-    <button class="p" onclick="go('fire')">전량 발사</button>
+    <button class="p" onclick="go('fire')">프로필 발사</button>
+  </div>
+
+  <h2>메시지 신고 (BLSPAMS)</h2>
+  <label>방 번호 c</label>
+  <input id="c" inputmode="numeric" placeholder="숫자만">
+  <label>로그 번호 l (쉼표로 여러 개)</label>
+  <input id="l" inputmode="numeric" placeholder="예: 123,456">
+  <div class="g">
+    <button onclick="go('msg')">스팸 시험</button>
+    <button class="p" onclick="go('msgfire')">메시지 발사</button>
   </div>
 
   <pre id="out">대기</pre>
@@ -74,9 +86,9 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
 
 <script>
 const $ = (id) => document.getElementById(id)
-const st = JSON.parse(localStorage.getItem('rp4') || '{}')
-$('k').value = st.k || ''; $('email').value = st.email || ''; $('uid').value = st.uid || ''; $('txt').value = st.txt || ''
-const save = () => localStorage.setItem('rp4', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value }))
+const st = JSON.parse(localStorage.getItem('rp5') || '{}')
+$('k').value = st.k || ''; $('email').value = st.email || ''; $('uid').value = st.uid || ''; $('txt').value = st.txt || ''; $('c').value = st.c || ''; $('l').value = st.l || ''
+const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value }))
 const q = () => '?k=' + encodeURIComponent($('k').value)
 
 async function post(path, body) {
@@ -121,7 +133,11 @@ async function go(what) {
   const uid = $('uid').value.trim()
   if (what !== 'status' && !uid) { $('out').textContent = 'userId 필요'; return }
   const p = new URLSearchParams({ k: $('k').value, uid })
-  if (what === 'fire') p.set('text', $('txt').value)
+  if (what === 'fire' || what === 'msgfire') p.set('text', $('txt').value)
+  if (what === 'msg' || what === 'msgfire') {
+    if (!$('c').value.trim() || !$('l').value.trim()) { $('out').textContent = '방·로그 번호 필요'; return }
+    p.set('c', $('c').value.trim()); p.set('l', $('l').value.trim())
+  }
   const t0 = Date.now()
   $('out').textContent = '요청 중…'
   lock(true)
@@ -142,4 +158,5 @@ function copy() { navigator.clipboard.writeText($('out').textContent) }
 refreshMe()
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/report/sw.js')
 </script>
+
 

@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises'
 import { join, extname } from 'node:path'
 import * as AUTH from './report-auth.mjs'
 import * as RH from './report-http.mjs'
+import * as LOCO from './report-loco.mjs'
+import * as MSG from './report-msg.mjs'
 
 const PORT = Number(process.env.PORT || 8080)
 const PUB = join(process.cwd(), 'public', 'report')
@@ -50,6 +52,12 @@ async function staticFile(res, name) {
   }
 }
 
+function queue(fn) {
+  const next = chain.then(fn)
+  chain = next.catch(function () {})
+  return next
+}
+
 async function handle(req, res) {
   const u = new URL(req.url, 'http://x')
   const p = u.pathname
@@ -65,19 +73,34 @@ async function handle(req, res) {
   if (keyOf() && k !== keyOf()) return send(res, 401, { ok: false, error: 'key' })
 
   if (p === '/report/me') return send(res, 200, AUTH.me())
-  if (p === '/report/status') return send(res, 200, RH.status())
+  if (p === '/report/status') {
+    const s = RH.status()
+    s.loco = LOCO.ready() ? 'O' : 'X'
+    return send(res, 200, s)
+  }
 
   if (p === '/report/login' && req.method === 'POST') {
     const b = await readBody(req)
     const r = await AUTH.login(String(b.email || ''), String(b.password || ''), b.deviceType === 'pc' ? 'pc' : 'tablet')
+    if (r.ok) {
+      try { await LOCO.connect(String(b.email || ''), String(b.password || ''), b.deviceType) }
+      catch (e) { console.log('loco 실패: ' + (e && e.message)) }
+    }
     return send(res, 200, r)
   }
   if (p === '/report/passcode' && req.method === 'POST') {
     const b = await readBody(req)
-    return send(res, 200, await AUTH.passcode(String(b.code || '')))
+    const r = await AUTH.passcode(String(b.code || ''))
+    if (r.ok) {
+      const c = AUTH.get()
+      try { await LOCO.connect(c && c.email, '', c && c.deviceType) }
+      catch (e) { console.log('loco 재연결 실패: ' + (e && e.message)) }
+    }
+    return send(res, 200, r)
   }
   if (p === '/report/logout' && req.method === 'POST') {
     AUTH.clear()
+    LOCO.close()
     return send(res, 200, { ok: true })
   }
 
@@ -85,12 +108,25 @@ async function handle(req, res) {
     const uid = String(u.searchParams.get('uid') || '')
     if (!uid) return send(res, 400, { ok: false, error: 'uid' })
     const text = String(u.searchParams.get('text') || '')
-    const next = chain.then(() => {
+    const next = queue(function () {
       if (p === '/report/host') return RH.probeHost(uid)
       if (p === '/report/slugs') return RH.probeSlugs(uid)
       return RH.fire(uid, text)
     })
-    chain = next.catch(() => {})
+    return send(res, 200, await next)
+  }
+
+  if (p === '/report/msg' || p === '/report/msgfire') {
+    const c = String(u.searchParams.get('c') || '')
+    const l = String(u.searchParams.get('l') || '')
+    const t = String(u.searchParams.get('uid') || '')
+    const text = String(u.searchParams.get('text') || '')
+    if (!c || !l || !t) return send(res, 400, { ok: false, error: 'c/l/uid' })
+    const next = queue(function () {
+      if (p === '/report/msg') return MSG.probe(c, l, t)
+      const ids = l.split(',').map(function (x) { return x.trim() }).filter(Boolean)
+      return MSG.fire(c, ids, t, text)
+    })
     return send(res, 200, await next)
   }
 
