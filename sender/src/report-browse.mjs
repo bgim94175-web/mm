@@ -75,6 +75,42 @@ export function rooms() {
   return { ok: true, count: items.length, rooms: items, text: '방 ' + items.length + '개' }
 }
 
+// ★ chatId 하나만 알아도 방 정보 복구 — LOGINLIST 가 partial snapshot 돌려줘서
+// 방 목록이 비어 있을 때 사용자가 수동으로 chatId 입력해서 쓰는 폴백.
+// CHATINFO 응답의 chatInfo.li 가 linkId, 나머지는 메타. 그대로 UI 의 pickedRoom 처럼 세팅.
+export async function lookupRoomByChatId(chatId) {
+  if (!ready()) return { ok: false, text: 'LOCO 세션 없음 — 상단 "LOCO 재연결" 먼저' }
+  if (!chatId) return { ok: false, text: 'chatId 필요' }
+  const L = await longOf()
+  const cid = L.fromString(String(chatId))
+  try {
+    const r = await send('CHATINFO', { chatId: cid })
+    if (!r || r.statusCode !== 0) {
+      return { ok: false, text: 'CHATINFO 실패 st=' + (r && r.statusCode) + ' body=' + JSON.stringify(r && r.body || {}).slice(0, 200) }
+    }
+    const ci = r.body && r.body.chatInfo
+    if (!ci) return { ok: false, text: 'CHATINFO 응답에 chatInfo 없음 (방이 없거나 이미 나감)' }
+    const linkId = ci.li != null ? toIdString(ci.li) : ''
+    const type = Number(ci.t)
+    const typeName = chatTypeName(type)
+    return {
+      ok: true,
+      room: {
+        chatId: toIdString(ci.chatId != null ? ci.chatId : chatId),
+        linkId,
+        type, typeName,
+        activeMembers: Number(ci.a) || 0,
+        lastLogId: toIdString(ci.lastLogId),
+        memberIds: Array.isArray(ci.i) ? ci.i.map(toIdString) : [],
+        preview: '',
+      },
+      text: typeName + ' / linkId=' + (linkId || '(없음 — 일반채팅일수 있음)'),
+    }
+  } catch (e) {
+    return { ok: false, text: 'CHATINFO ERR ' + (e && e.message ? e.message : e) }
+  }
+}
+
 // 방 하나의 최근 메시지.
 //   ① CHATINFO → 방의 최신 lastLogId (max)
 //   ② SYNCMSG 이분탐색: SYNCMSG 는 "cur 이후 오름차순 최대 ~80개" 를 준다.

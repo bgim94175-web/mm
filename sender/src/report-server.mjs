@@ -302,6 +302,13 @@ async function handle(req, res) {
     }
     return send(res, 200, BROWSE.rooms())
   }
+  // chatId 로 방 하나만 CHATINFO 조회 (LOGINLIST partial snapshot 폴백)
+  if (p === '/report/room-lookup') {
+    const c = String(u.searchParams.get('c') || '')
+    if (!c) return send(res, 400, { ok: false, text: 'c (chatId) 필요' })
+    const r = await queue(function () { return BROWSE.lookupRoomByChatId(c) })
+    return send(res, 200, r)
+  }
 
   if (p === '/report/room-msgs') {
     const c = String(u.searchParams.get('c') || '')

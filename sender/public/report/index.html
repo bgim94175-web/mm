@@ -100,6 +100,13 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   <input id="roomFilter" class="search hide" placeholder="방 이름·멤버 이름 검색 (실시간)" oninput="filterRooms()">
   <div id="roomList" class="list hide"></div>
 
+  <div style="margin-top:10px;padding:10px;border:1px solid #333;border-radius:10px;background:#141414">
+    <div class="me" style="margin-bottom:6px">💡 <b>방 목록이 비어 있을 때</b>: LOCO 세션의 LOGINLIST 가 partial snapshot 돌려주면 chatDatas 가 빔. 방 chatId 직접 알면 아래로 조회 가능.</div>
+    <label>chatId 직접 입력</label>
+    <input id="manualChatId" inputmode="numeric" placeholder="예: 18494003543507881">
+    <div class="row" style="margin-top:6px"><button onclick="lookupRoom()">CHATINFO 로 방 조회 (linkId 자동)</button></div>
+  </div>
+
   <div id="pickedRoomBox" class="hide" style="margin-top:14px">
     <h2 id="pickedRoomName" style="margin-bottom:4px"></h2>
     <div class="row" style="margin-top:4px">
@@ -451,6 +458,26 @@ function renderRooms() {
   })
 }
 function filterRooms() { renderRooms() }
+
+// chatId 직접 입력 → CHATINFO 로 그 방 하나 조회 → __rooms 에 주입 → pickRoom 호출
+async function lookupRoom() {
+  const c = ($('manualChatId').value || '').trim()
+  if (!/^\d+$/.test(c)) { $('out').textContent = 'chatId 는 숫자만'; return }
+  $('out').textContent = 'CHATINFO 조회 중…'
+  try {
+    const j = await fetch('/report/room-lookup?c=' + encodeURIComponent(c) + q().replace('?', '&')).then((r) => r.json())
+    if (!j.ok) { $('out').textContent = '실패: ' + (j.text || JSON.stringify(j)); return }
+    const rm = j.room
+    // __rooms 에 주입 (중복이면 교체)
+    window.__rooms = window.__rooms || []
+    const idx = window.__rooms.findIndex((x) => x.chatId === rm.chatId)
+    if (idx >= 0) window.__rooms[idx] = rm; else window.__rooms.unshift(rm)
+    $('roomList').classList.remove('hide'); $('roomFilter').classList.remove('hide')
+    renderRooms()
+    $('out').textContent = '★ 방 조회 성공: ' + j.text + ' — 아래 pick 자동 됨'
+    await pickRoom(rm.chatId, rm.linkId || '')
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
+}
 
 async function pickRoom(chatId, linkId) {
   const rm = (window.__rooms || []).find((r) => r.chatId === chatId)
