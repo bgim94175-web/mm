@@ -138,6 +138,7 @@ export async function messages(chatId, cnt) {
       type: Number(log.type),
       sendAt: Number(log.sendAt) || 0,
       message: text.slice(0, 200),
+      nick: '',  // 아래에서 채움
     }
   })
   items.sort((a, b) => {
@@ -145,6 +146,25 @@ export async function messages(chatId, cnt) {
     return A > B ? -1 : A < B ? 1 : 0
   })
   const top = items.slice(0, n)
+
+  // 저자 nick 매핑 — MEMBER 로 저자 셋 한 번에 받아서 닉 채움. 메시지에 "123…" 숫자만
+  // 뜨면 누가 누군지 몰라 선택이 힘드니, 바로 여기서 채워준다.
+  const authors = Array.from(new Set(top.map((it) => it.authorId).filter(Boolean)))
+  if (authors.length) {
+    try {
+      const r = await send('MEMBER', { chatId: cid, memberIds: authors.map((id) => L.fromString(id)) })
+      const arr = r && r.body && Array.isArray(r.body.members) ? r.body.members : []
+      const nicks = new Map()
+      for (const m of arr) {
+        const uid = toIdString(m.userId)
+        if (uid) nicks.set(uid, typeof m.nickName === 'string' ? m.nickName : '')
+      }
+      top.forEach((it) => { it.nick = nicks.get(it.authorId) || '' })
+      trace.push('MEMBER(nicks)=' + nicks.size)
+    } catch (e) {
+      trace.push('MEMBER(nicks) ERR ' + (e && e.message ? e.message : e))
+    }
+  }
 
   const newest = top[0] || null
   console.log('[msgs] c=' + chatId
@@ -155,6 +175,70 @@ export async function messages(chatId, cnt) {
     + ' trace=' + trace.join('|'))
 
   return { ok: true, count: top.length, chatId: String(chatId), messages: top, trace }
+}
+
+// 방의 전체 멤버 목록 — 닉으로 찾아서 바로 신고 플로우로 넘기기 위한 소스.
+// 로그인 응답(LOGINLIST) 에 담긴 memberIds 를 MEMBER 로 청크 조회 (한 번에 50명씩).
+// pli(오픈프로필 링크 id) 가 있는 멤버는 그 값까지 들고오되, 실제 URL(INFOLINK)은
+// 멤버가 선택될 때 memberProfile() 로 따로 받는다 — 전원 INFOLINK 는 너무 비쌈.
+export async function members(chatId) {
+  if (!ready()) return { ok: false, text: 'LOCO 세션 없음' }
+  if (!chatId) return { ok: false, text: 'chatId 필요' }
+  const L = await longOf()
+  const cid = L.fromString(String(chatId))
+  const lr = loginResult()
+  const chatDatas = (lr && Array.isArray(lr.chatDatas)) ? lr.chatDatas : []
+  const room = chatDatas.find((c) => toIdString(c.c) === String(chatId))
+  let ids = room && Array.isArray(room.i) ? room.i.map(toIdString).filter(Boolean) : []
+  // LOGINLIST 에 멤버 ID 없으면 CHATINFO 로 보충
+  if (!ids.length) {
+    try {
+      const r = await send('CHATINFO', { chatId: cid })
+      const ci = r && r.body && r.body.chatInfo
+      if (ci) {
+        for (const key of ['memberIds', 'displayMemberIds', 'activeMemberIds']) {
+          if (Array.isArray(ci[key])) ids = ci[key].map(toIdString).filter(Boolean)
+          if (ids.length) break
+        }
+      }
+    } catch (e) {}
+  }
+  if (!ids.length) return { ok: true, count: 0, members: [], text: '멤버 ID 못 가져옴 (방장이 멤버 공개를 제한했을 수 있음)' }
+
+  const CHUNK = 50
+  const out = []
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK).map((id) => L.fromString(id))
+    try {
+      const r = await send('MEMBER', { chatId: cid, memberIds: chunk })
+      const arr = r && r.body && Array.isArray(r.body.members) ? r.body.members : []
+      for (const m of arr) {
+        out.push({
+          userId: toIdString(m.userId),
+          nick: typeof m.nickName === 'string' ? m.nickName : '',
+          ptp: Number(m.ptp) || 0,
+          pli: toIdString(m.pli),
+          hasOpenProfile: Number(m.ptp) === 16 && !!toIdString(m.pli),
+        })
+      }
+    } catch (e) {
+      // 한 청크 실패해도 다음 진행
+    }
+  }
+  // 닉 기준 정렬 (빈 닉은 뒤로)
+  out.sort((a, b) => (a.nick || '￿').localeCompare(b.nick || '￿', 'ko'))
+  return { ok: true, count: out.length, members: out, text: '멤버 ' + out.length + '명' }
+}
+
+// 특정 저자의 과거 메시지만 뽑기 — messages() 결과에서 authorId 필터.
+// messages() 가 최대 80 개 창을 반환하니, 그 안에 해당 저자가 있어야 보임.
+// 더 올리고 싶으면 messages() cnt 를 80 으로 쓰고 클라이언트에서 필터.
+export async function messagesByAuthor(chatId, authorId, cnt) {
+  const base = await messages(chatId, cnt || 80)
+  if (!base.ok) return base
+  const target = String(authorId)
+  const filtered = (base.messages || []).filter((m) => String(m.authorId) === target)
+  return { ok: true, count: filtered.length, chatId: base.chatId, authorId: target, messages: filtered, trace: base.trace }
 }
 
 // CHATINFO 로 방 멤버 포함 상세. 열린 방의 공식 멤버 목록도 여기서.

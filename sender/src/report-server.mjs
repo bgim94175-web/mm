@@ -246,6 +246,32 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
+  // 방의 전체 멤버 목록 — 닉 검색용
+  if (p === '/report/room-members') {
+    const c = String(u.searchParams.get('c') || '')
+    if (!c) return send(res, 400, { ok: false, error: 'c' })
+    if (!LOCO.ready()) {
+      try { await LOCO.connect() }
+      catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message ? e.message : e) }) }
+    }
+    const r = await queue(function () { return BROWSE.members(c) })
+    return send(res, 200, r)
+  }
+
+  // 방 안에서 특정 저자의 메시지만
+  if (p === '/report/author-msgs') {
+    const c = String(u.searchParams.get('c') || '')
+    const uid = String(u.searchParams.get('uid') || '')
+    const cnt = Number(u.searchParams.get('cnt') || '80')
+    if (!c || !uid) return send(res, 400, { ok: false, error: 'c/uid' })
+    if (!LOCO.ready()) {
+      try { await LOCO.connect() }
+      catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message ? e.message : e) }) }
+    }
+    const r = await queue(function () { return BROWSE.messagesByAuthor(c, uid, cnt) })
+    return send(res, 200, r)
+  }
+
   // 멤버 한 명의 오픈프로필 링크 (MEMBER → pli → INFOLINK → lu)
   if (p === '/report/member-link') {
     const c = String(u.searchParams.get('c') || '')

@@ -32,6 +32,17 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
 .item .t{font-weight:600;color:#9ab}
 .item .s{color:#888;font-size:11px;margin-top:2px}
 .item .m{color:#ccc;font-size:12px;margin-top:3px;word-break:break-all}
+.item.sel{background:#1a3a5c;border-left:3px solid #3b6ef5;padding-left:9px}
+.item.sameAuthor{background:#2a2a3d}
+.item.hide{display:none}
+.search{padding:9px 12px;background:#161616;border:1px solid #333;border-bottom:0;border-radius:10px 10px 0 0;color:#eee;font-size:14px;width:100%}
+.list.hasSearch{border-top-left-radius:0;border-top-right-radius:0;border-top:0}
+.chip{display:inline-block;padding:3px 8px;border-radius:999px;background:#1a3a5c;color:#9cf;font-size:11px;font-weight:600;margin-right:6px}
+.pickBanner{position:sticky;top:0;z-index:10;background:#0e1a2d;border:1px solid #1a3a5c;border-radius:10px;padding:10px 12px;margin:12px 0;font-size:13px;color:#cde}
+.pickBanner .k{color:#9cf;font-weight:600}
+.pickBanner.empty{background:#1b1b1b;border-color:#2a2a2a;color:#888}
+.subBtn{padding:6px 10px;font-size:11px;background:#2a2a2a;border:0;border-radius:6px;color:#9ab;cursor:pointer;margin-left:6px}
+.subBtn:hover{background:#333}
 </style>
 
 
@@ -64,12 +75,32 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <div class="row"><button onclick="doLogout()">로그아웃</button><button onclick="refreshMe()">새로고침</button><button onclick="locoReconnect()">LOCO 재연결</button></div>
   </div>
 
-  <h2>둘러보기 (자동 채우기)</h2>
+  <h2>방 찾기</h2>
   <div class="row"><button onclick="loadRooms()">방 목록 불러오기</button></div>
+  <input id="roomFilter" class="search hide" placeholder="방 이름·멤버 이름 검색 (실시간)" oninput="filterRooms()">
   <div id="roomList" class="list hide"></div>
-  <div id="msgList" class="list hide"></div>
 
-  <label>대상 userId</label>
+  <div id="pickedRoomBox" class="hide" style="margin-top:14px">
+    <h2 id="pickedRoomName" style="margin-bottom:4px"></h2>
+    <div class="row" style="margin-top:4px">
+      <button onclick="loadMembers()">멤버 목록 (닉 검색)</button>
+      <button onclick="refreshMsgs()">메시지 새로고침</button>
+    </div>
+    <label>메시지 개수 (최대 80)</label>
+    <input id="msgCnt" inputmode="numeric" value="30">
+
+    <h2 style="margin-top:14px">멤버</h2>
+    <input id="memFilter" class="search hide" placeholder="닉네임 검색" oninput="filterMembers()">
+    <div id="memList" class="list hide"></div>
+
+    <h2 style="margin-top:14px">메시지</h2>
+    <div id="msgHint" class="me" style="margin-bottom:6px">저자 이름 왼쪽 ◉ 누르면 그 저자만 보기</div>
+    <div id="msgList" class="list hide"></div>
+  </div>
+
+  <div id="pickBanner" class="pickBanner empty">아직 아무 메시지도 선택 안 됨 — 위에서 방 → 메시지 순서로 고르면 아래 신고 섹션이 활성화됨</div>
+
+  <label>대상 userId <span class="me" style="font-weight:normal">(메시지 클릭 시 자동 — 수동 입력도 가능)</span></label>
   <input id="uid" inputmode="numeric" placeholder="숫자만 — 메시지 클릭 시 자동">
   <div id="profBox" class="me hide" style="margin-top:6px"></div>
   <label>주입할 문장 (선택 — 카카오 심사자료로 올라가는 "원문")</label>
@@ -143,6 +174,8 @@ $('mth').value = st.mth || ''; $('rawM').value = st.rawM || ''; $('rawB').value 
 if (st.ocCat) $('ocCat').value = st.ocCat
 if (st.ocRepeat) $('ocRepeat').value = st.ocRepeat
 if (st.ocBatch) $('ocBatch').checked = true
+$('ocBatch').addEventListener('change', () => { save(); updatePickBanner() })
+$('msgCnt').addEventListener('change', () => { if (pickedRoom) loadMsgs() })
 const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value, ocCat: $('ocCat').value, ocRepeat: $('ocRepeat').value, ocBatch: $('ocBatch').checked }))
 const q = () => '?k=' + encodeURIComponent($('k').value)
 
@@ -244,73 +277,208 @@ async function go(what) {
 }
 function esc(s) { return String(s || '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) }
 let pickedCtx = null
+let pickedRoom = null          // {chatId, linkId, label}
+let onlyAuthor = null          // 저자 필터 — authorId 문자열 or null
+window.__rooms = []
+window.__msgs = []
+window.__members = []
+
+function updatePickBanner() {
+  const b = $('pickBanner')
+  if (!pickedCtx || !pickedCtx.logId) {
+    b.className = 'pickBanner empty'
+    b.innerHTML = '아직 아무 메시지도 선택 안 됨 — 위에서 방 → 메시지 순서로 고르면 아래 신고 섹션이 활성화됨'
+    return
+  }
+  const nick = pickedCtx.nick || '(닉 없음)'
+  const snippet = esc(String(pickedCtx.message || '').slice(0, 60)) || '(빈 글)'
+  const extra = (window.__msgs || []).filter((m) => String(m.authorId) === String(pickedCtx.authorId) && String(m.logId) !== String(pickedCtx.logId)).length
+  b.className = 'pickBanner'
+  b.innerHTML = '선택됨 · <span class="k">' + esc(nick) + '</span> <span class="me">(uid ' + pickedCtx.authorId + ')</span>'
+    + ' <span class="chip">주logId ' + pickedCtx.logId + '</span>'
+    + ($('ocBatch') && $('ocBatch').checked ? '<span class="chip">+ 같은 저자 ' + extra + '개 자동</span>' : '')
+    + '<div class="me" style="margin-top:4px">"' + snippet + '"</div>'
+}
+
 async function loadRooms() {
-  const box = $('roomList'); box.classList.remove('hide'); box.innerHTML = '<div class="item">불러오는 중…</div>'
-  $('msgList').classList.add('hide'); $('msgList').innerHTML = ''
+  const box = $('roomList'); const sb = $('roomFilter')
+  sb.classList.remove('hide'); box.classList.remove('hide')
+  box.classList.add('hasSearch')
+  box.innerHTML = '<div class="item">불러오는 중…</div>'
   try {
     const r = await fetch('/report/rooms' + q())
     const j = await r.json()
     if (!j.ok) { box.innerHTML = '<div class="item">실패: ' + esc(j.text || JSON.stringify(j)) + '</div>'; return }
-    const rooms = Array.isArray(j.rooms) ? j.rooms : []
-    if (!rooms.length) { box.innerHTML = '<div class="item">방 없음</div>'; return }
-    box.innerHTML = rooms.map((rm) =>
-      '<div class="item" onclick="loadMsgs(\'' + rm.chatId + '\',\'' + (rm.linkId || '') + '\')">' +
-        '<div class="t">' + esc(rm.typeName) + ' · ' + rm.activeMembers + '명 · ' + esc(rm.members || '(이름없음)') + '</div>' +
-        '<div class="s">chat_id ' + rm.chatId + (rm.linkId ? ' · link_id ' + rm.linkId : '') + '</div>' +
-        '<div class="m">' + esc(rm.preview || '(글 없음)') + '</div>' +
-      '</div>'
-    ).join('')
+    window.__rooms = Array.isArray(j.rooms) ? j.rooms : []
+    renderRooms()
   } catch (e) { box.innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
 }
-async function loadMsgs(chatId, linkId) {
+function renderRooms() {
+  const box = $('roomList')
+  if (!window.__rooms.length) { box.innerHTML = '<div class="item">방 없음</div>'; return }
+  const kw = ($('roomFilter').value || '').trim().toLowerCase()
+  const rows = window.__rooms.map((rm) => {
+    const label = (rm.members || '') + ' ' + (rm.preview || '') + ' ' + rm.chatId
+    const match = !kw || label.toLowerCase().indexOf(kw) >= 0
+    const sel = pickedRoom && pickedRoom.chatId === rm.chatId
+    return '<div class="item' + (match ? '' : ' hide') + (sel ? ' sel' : '') + '" data-c="' + rm.chatId + '" data-li="' + (rm.linkId || '') + '">' +
+      '<div class="t">' + esc(rm.typeName) + ' · ' + rm.activeMembers + '명 · ' + esc(rm.members || '(이름없음)') + '</div>' +
+      '<div class="s">chat_id ' + rm.chatId + (rm.linkId ? ' · link_id ' + rm.linkId : '') + '</div>' +
+      '<div class="m">' + esc(rm.preview || '(글 없음)') + '</div>' +
+    '</div>'
+  }).join('')
+  box.innerHTML = rows
+  Array.from(box.querySelectorAll('.item[data-c]')).forEach((el) => {
+    el.addEventListener('click', () => pickRoom(el.dataset.c, el.dataset.li || ''))
+  })
+}
+function filterRooms() { renderRooms() }
+
+async function pickRoom(chatId, linkId) {
+  const rm = (window.__rooms || []).find((r) => r.chatId === chatId)
+  pickedRoom = { chatId, linkId, label: rm ? (rm.typeName + ' · ' + (rm.members || '(이름없음)')) : chatId }
+  pickedCtx = { chatId, linkId }
+  onlyAuthor = null
   $('c').value = chatId; save()
-  pickedCtx = { chatId, linkId: linkId || '' }
-  const box = $('msgList'); box.classList.remove('hide'); box.innerHTML = '<div class="item">불러오는 중…</div>'
+  $('pickedRoomBox').classList.remove('hide')
+  $('pickedRoomName').textContent = pickedRoom.label
+  $('memList').classList.add('hide'); $('memList').innerHTML = ''
+  $('memFilter').classList.add('hide'); $('memFilter').value = ''
+  renderRooms()
+  await loadMsgs()
+}
+
+async function refreshMsgs() { await loadMsgs() }
+
+async function loadMsgs() {
+  if (!pickedRoom) return
+  const box = $('msgList'); box.classList.remove('hide')
+  box.innerHTML = '<div class="item">불러오는 중…</div>'
+  const cnt = Math.max(1, Math.min(80, parseInt($('msgCnt').value, 10) || 30))
   try {
-    const r = await fetch('/report/room-msgs?c=' + encodeURIComponent(chatId) + '&cnt=15&k=' + encodeURIComponent($('k').value))
+    const r = await fetch('/report/room-msgs?c=' + encodeURIComponent(pickedRoom.chatId) + '&cnt=' + cnt + '&k=' + encodeURIComponent($('k').value))
     const j = await r.json()
     if (!j.ok) { box.innerHTML = '<div class="item">실패: ' + esc(j.text || JSON.stringify(j)) + '</div>'; return }
     const msgs = Array.isArray(j.messages) ? j.messages : []
+    window.__msgs = msgs
     if (!msgs.length) {
       const tr = Array.isArray(j.trace) ? j.trace.join(' · ') : ''
       box.innerHTML = '<div class="item">메시지 없음<div class="s">' + esc(tr) + '</div></div>'
       return
     }
-    box.innerHTML = msgs.map((m, i) => {
-      const when = m.sendAt ? new Date(m.sendAt * 1000).toLocaleString('ko-KR', { hour: '2-digit', minute: '2-digit', month: 'numeric', day: 'numeric' }) : ''
-      return '<div class="item" data-i="' + i + '">' +
-        '<div class="t">' + esc(when) + ' · type ' + m.type + ' · author ' + m.authorId + '</div>' +
-        '<div class="s">log_id ' + m.logId + '</div>' +
-        '<div class="m">' + esc(m.message || '(빈 글)') + '</div>' +
-      '</div>'
-    }).join('')
-    // 메시지 데이터를 전역에 저장해 클릭 시 꺼낼 수 있게 (문자열 이스케이프 지옥 회피)
-    window.__msgs = msgs
-    Array.from(box.querySelectorAll('.item')).forEach((el) => {
-      el.addEventListener('click', () => {
-        const i = Number(el.dataset.i)
-        const m = window.__msgs[i]
-        if (m) pickMsg(chatId, m.logId, m.authorId, m)
-      })
-    })
+    renderMsgs()
+    updatePickBanner()
   } catch (e) { box.innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
 }
+
+function renderMsgs() {
+  const box = $('msgList'); const msgs = window.__msgs || []
+  box.innerHTML = msgs.map((m, i) => {
+    const when = m.sendAt ? new Date(m.sendAt * 1000).toLocaleString('ko-KR', { hour: '2-digit', minute: '2-digit', month: 'numeric', day: 'numeric' }) : ''
+    const nick = m.nick ? esc(m.nick) : esc(String(m.authorId).slice(-6)) + '…'
+    const sameAs = pickedCtx && pickedCtx.authorId && String(m.authorId) === String(pickedCtx.authorId)
+    const isSel = pickedCtx && String(m.logId) === String(pickedCtx.logId)
+    const dim = onlyAuthor && String(m.authorId) !== String(onlyAuthor)
+    return '<div class="item' + (dim ? ' hide' : '') + (isSel ? ' sel' : sameAs ? ' sameAuthor' : '') + '" data-i="' + i + '">' +
+      '<div class="t">' +
+        '<button class="subBtn" data-au="' + m.authorId + '" title="이 저자만 보기">◉</button>' +
+        esc(nick) +
+        ' <span class="me" style="font-weight:normal">· ' + esc(when) + '</span>' +
+      '</div>' +
+      '<div class="s">log_id ' + m.logId + ' · uid ' + m.authorId + '</div>' +
+      '<div class="m">' + esc(m.message || '(빈 글)') + '</div>' +
+    '</div>'
+  }).join('')
+  Array.from(box.querySelectorAll('.item[data-i]')).forEach((el) => {
+    el.addEventListener('click', (ev) => {
+      // ◉ 버튼 클릭 → 저자 필터 토글, 그 외 → 메시지 선택
+      if (ev.target && ev.target.classList && ev.target.classList.contains('subBtn')) {
+        const au = ev.target.dataset.au
+        onlyAuthor = (onlyAuthor === au) ? null : au
+        renderMsgs()
+        return
+      }
+      const i = Number(el.dataset.i); const m = window.__msgs[i]
+      if (m) pickMsg(pickedRoom.chatId, m.logId, m.authorId, m)
+    })
+  })
+}
+
 async function pickMsg(chatId, logId, authorId, m) {
   $('c').value = chatId; $('l').value = logId; $('uid').value = authorId; save()
-  pickedCtx = Object.assign(pickedCtx || {}, { chatId, logId, authorId, sendAt: m && m.sendAt || 0, message: m && m.message || '' })
-  $('out').textContent = '자동 채움 완료 → c=' + chatId + ' · l=' + logId + ' · uid=' + authorId + '\n오픈프로필 확인 중…'
+  pickedCtx = Object.assign(pickedCtx || {}, {
+    chatId, logId, authorId,
+    sendAt: (m && m.sendAt) || 0,
+    message: (m && m.message) || '',
+    nick: (m && m.nick) || '',
+    type: (m && m.type) || 1,
+  })
+  renderMsgs(); updatePickBanner()
   const pb = $('profBox'); pb.classList.remove('hide'); pb.textContent = '오픈프로필 조회 중…'
   try {
     const r = await fetch('/report/member-link?c=' + encodeURIComponent(chatId) + '&uid=' + encodeURIComponent(authorId) + '&k=' + encodeURIComponent($('k').value))
     const j = await r.json()
     if (!j.ok) { pb.textContent = '오픈프로필: ' + esc(j.text || '실패'); return }
+    if (j.nick) pickedCtx.nick = j.nick
+    updatePickBanner()
     if (j.url) {
-      pb.innerHTML = '오픈프로필 · ' + esc(j.nick || '이름없음') + ' · <a href="' + esc(j.url) + '" target="_blank" style="color:#9cf">' + esc(j.url) + '</a> <button onclick="navigator.clipboard.writeText(\'' + j.url + '\')" style="padding:4px 8px;font-size:11px;margin-left:6px">복사</button>'
+      pb.innerHTML = '오픈프로필 · ' + esc(j.nick || '이름없음') + ' · <a href="' + esc(j.url) + '" target="_blank" style="color:#9cf">' + esc(j.url) + '</a> <button class="subBtn" onclick="navigator.clipboard.writeText(\'' + j.url + '\')">복사</button>'
     } else {
       pb.textContent = '오픈프로필: ' + (j.text || '없음') + ' (닉 ' + (j.nick || '-') + ')'
     }
-    $('out').textContent = '자동 채움 완료 → c=' + chatId + ' · l=' + logId + ' · uid=' + authorId + '\n이제 [메서드 찾기] 를 눌러.'
   } catch (e) { pb.textContent = '오픈프로필 실패: ' + e.message }
+}
+
+async function loadMembers() {
+  if (!pickedRoom) return
+  const box = $('memList'); const sb = $('memFilter')
+  sb.classList.remove('hide'); box.classList.remove('hide')
+  box.classList.add('hasSearch')
+  box.innerHTML = '<div class="item">불러오는 중…</div>'
+  try {
+    const r = await fetch('/report/room-members?c=' + encodeURIComponent(pickedRoom.chatId) + '&k=' + encodeURIComponent($('k').value))
+    const j = await r.json()
+    if (!j.ok) { box.innerHTML = '<div class="item">실패: ' + esc(j.text || JSON.stringify(j)) + '</div>'; return }
+    window.__members = Array.isArray(j.members) ? j.members : []
+    renderMembers()
+  } catch (e) { box.innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
+}
+function renderMembers() {
+  const box = $('memList'); const members = window.__members || []
+  if (!members.length) { box.innerHTML = '<div class="item">멤버 목록 없음</div>'; return }
+  const kw = ($('memFilter').value || '').trim().toLowerCase()
+  const rows = members.map((mm) => {
+    const match = !kw || (mm.nick || '').toLowerCase().indexOf(kw) >= 0 || (mm.userId || '').indexOf(kw) >= 0
+    const op = mm.hasOpenProfile ? ' · <span class="chip">OpenProfile</span>' : ''
+    return '<div class="item' + (match ? '' : ' hide') + '" data-uid="' + mm.userId + '">' +
+      '<div class="t">' + esc(mm.nick || '(닉 없음)') + op + '</div>' +
+      '<div class="s">uid ' + mm.userId + '</div>' +
+    '</div>'
+  }).join('')
+  box.innerHTML = rows
+  Array.from(box.querySelectorAll('.item[data-uid]')).forEach((el) => {
+    el.addEventListener('click', () => pickMember(el.dataset.uid))
+  })
+}
+function filterMembers() { renderMembers() }
+
+async function pickMember(userId) {
+  if (!pickedRoom) return
+  onlyAuthor = userId
+  $('msgList').innerHTML = '<div class="item">' + esc(userId) + ' 저자 메시지 로드 중…</div>'
+  $('msgList').classList.remove('hide')
+  try {
+    const r = await fetch('/report/author-msgs?c=' + encodeURIComponent(pickedRoom.chatId) + '&uid=' + encodeURIComponent(userId) + '&cnt=80&k=' + encodeURIComponent($('k').value))
+    const j = await r.json()
+    if (!j.ok) { $('msgList').innerHTML = '<div class="item">실패: ' + esc(j.text || JSON.stringify(j)) + '</div>'; return }
+    const msgs = Array.isArray(j.messages) ? j.messages : []
+    // 저자 닉은 members 에서 채워 넣기 (author-msgs 는 저자 1명이라 nick 별도 쿼리 없음)
+    const mm = (window.__members || []).find((x) => String(x.userId) === String(userId))
+    if (mm) msgs.forEach((m) => { if (!m.nick) m.nick = mm.nick })
+    window.__msgs = msgs
+    renderMsgs()
+    if (!msgs.length) $('msgList').innerHTML = '<div class="item">이 저자의 메시지 없음 (최근 80개 창에서)</div>'
+  } catch (e) { $('msgList').innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
 }
 function ctxWithInject() {
   // "주입할 문장" 이 비어있지 않으면 원문 대신 그걸 서버에 보냄 (심사 자료 조작) — primary 메시지에만 적용.
