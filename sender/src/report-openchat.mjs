@@ -63,22 +63,21 @@ function longStr(v) {
   return '0'
 }
 
-export function buildChatLogInfosString(ctx) {
-  // authorIdOverride 가 유효하면 u 만 그 값으로 덮어씀. logId/message/sendAt/type 은 그대로.
-  // 실험용: 서버가 u 를 그대로 믿는지 l 로 조회해 u 를 무시하는지 판정.
-  const uRaw = (ctx.authorIdOverride != null && ctx.authorIdOverride !== '')
-    ? ctx.authorIdOverride
-    : ctx.authorId
+// 한 개 메시지 → JSON object 문자열. 필드 순서는 APK Lyud1;->j(StringBuilder 조립 순서) 와 바이트 단위로 일치:
+//   u → m{message→referer→revision} → s → t → l → scope → [threadId]
+// isPrimary=true 일 때만 authorIdOverride·injectText 가 적용됨 (extra 들은 각자 실제 값 그대로).
+function logItem(lg, isPrimary) {
+  const uRaw = (isPrimary && lg.authorIdOverride != null && lg.authorIdOverride !== '')
+    ? lg.authorIdOverride
+    : lg.authorId
   const u = longStr(uRaw)
-  const l = longStr(ctx.logId)
-  const s = Number(ctx.sendAt) || 0
-  const t = Number(ctx.type) || 1
-  // injectText 가 있으면 그걸로 원문 조작, 없으면 실제 원문. 심사 자료가 됨.
-  const rawMsg = (ctx.injectText && String(ctx.injectText).trim()) ? String(ctx.injectText) : String(ctx.message || '')
+  const l = longStr(lg.logId)
+  const s = Number(lg.sendAt) || 0
+  const t = Number(lg.type) || 1
+  const rawMsg = (isPrimary && lg.injectText && String(lg.injectText).trim())
+    ? String(lg.injectText)
+    : String(lg.message || '')
   const msg = jsonEscape(rawMsg)
-  // ─── 필드 순서는 APK Lyud1;->j(StringBuilder 조립 순서) 와 바이트 단위로 일치 ───
-  //  u → m{message→referer→revision} → s → t → l → scope
-  //  threadId 는 null 이면 생략 (앱도 동일).
   const parts = [
     '"u":' + u,
     '"m":{"message":"' + msg + '","referer":0,"revision":0}',
@@ -87,10 +86,26 @@ export function buildChatLogInfosString(ctx) {
     '"l":' + l,
     '"scope":1',
   ]
-  if (ctx.threadId != null && ctx.threadId !== '' && String(ctx.threadId) !== '0') {
-    parts.push('"threadId":' + longStr(ctx.threadId))
+  if (lg.threadId != null && lg.threadId !== '' && String(lg.threadId) !== '0') {
+    parts.push('"threadId":' + longStr(lg.threadId))
   }
-  return '[{' + parts.join(',') + '}]'
+  return '{' + parts.join(',') + '}'
+}
+
+export function buildChatLogInfosString(ctx) {
+  // 기본: primary 메시지 하나.
+  const items = [logItem(ctx, true)]
+  // 같은 저자의 추가 메시지 — UI 에서 "같은 저자 메시지 함께 신고" 체크 시 extraLogs 에 담겨 들어옴.
+  // 서버가 chatLogInfos 를 배열로 받는 이유 자체가 다건 묶음 신고를 지원하기 위함 (앱 UI 의
+  // "메시지 여러 개 체크해서 신고" 와 동일 경로). primary 의 injectText 는 extra 에는 적용 안 함
+  // — extra 는 "같은 저자가 과거에 실제로 보낸 다른 글들" 이라는 맥락이어야 심사자료로 합리적.
+  if (Array.isArray(ctx.extraLogs)) {
+    for (const extra of ctx.extraLogs) {
+      if (!extra || !extra.logId || !extra.authorId) continue
+      items.push(logItem(extra, false))
+    }
+  }
+  return '[' + items.join(',') + ']'
 }
 
 export function buildBody(ctx, category) {

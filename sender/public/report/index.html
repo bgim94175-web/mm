@@ -114,6 +114,10 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   </select>
   <label>연속 발사 횟수 (한 계정 N회 — 서버 dedupe 유무 확인용)</label>
   <input id="ocRepeat" inputmode="numeric" value="1" placeholder="기본 1회">
+  <label style="display:flex;align-items:center;gap:8px;margin:12px 0 4px;color:#eee">
+    <input type="checkbox" id="ocBatch" style="width:auto;margin:0">
+    <span>같은 저자의 다른 메시지도 함께 신고 (로드된 목록 중 자동 포함)</span>
+  </label>
   <div class="g">
     <button class="p" onclick="ocOne()">선택 카테고리 집중 발사</button>
     <button onclick="ocFireAll()">(참고용) 12종 뿌리기</button>
@@ -138,7 +142,8 @@ $('k').value = st.k || ''; $('email').value = st.email || ''; $('uid').value = s
 $('mth').value = st.mth || ''; $('rawM').value = st.rawM || ''; $('rawB').value = st.rawB || ''
 if (st.ocCat) $('ocCat').value = st.ocCat
 if (st.ocRepeat) $('ocRepeat').value = st.ocRepeat
-const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value, ocCat: $('ocCat').value, ocRepeat: $('ocRepeat').value }))
+if (st.ocBatch) $('ocBatch').checked = true
+const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value, ocCat: $('ocCat').value, ocRepeat: $('ocRepeat').value, ocBatch: $('ocBatch').checked }))
 const q = () => '?k=' + encodeURIComponent($('k').value)
 
 async function post(path, body) {
@@ -308,26 +313,48 @@ async function pickMsg(chatId, logId, authorId, m) {
   } catch (e) { pb.textContent = '오픈프로필 실패: ' + e.message }
 }
 function ctxWithInject() {
-  // "주입할 문장" 이 비어있지 않으면 원문 대신 그걸 서버에 보냄 (심사 자료 조작)
+  // "주입할 문장" 이 비어있지 않으면 원문 대신 그걸 서버에 보냄 (심사 자료 조작) — primary 메시지에만 적용.
   const inject = ($('txt').value || '').trim()
-  return Object.assign({}, pickedCtx, inject ? { injectText: inject } : {})
+  const ctx = Object.assign({}, pickedCtx, inject ? { injectText: inject } : {})
+  // "같은 저자의 다른 메시지도 함께 신고" 체크 시 로드된 메시지 중 같은 authorId 를 extraLogs 로 담음.
+  // primary (현재 pickedCtx.logId) 는 중복 방지로 제외. 결과: 한 신고에 N개 메시지가 하나의
+  // chatLogInfos 배열로 들어감 — 앱의 "메시지 여러 개 체크해서 신고" 와 동일 경로.
+  if ($('ocBatch') && $('ocBatch').checked && window.__msgs && pickedCtx && pickedCtx.authorId) {
+    const sameAuthor = window.__msgs.filter((m) =>
+      String(m.authorId) === String(pickedCtx.authorId) &&
+      String(m.logId) !== String(pickedCtx.logId)
+    )
+    if (sameAuthor.length) {
+      ctx.extraLogs = sameAuthor.map((m) => ({
+        authorId: m.authorId,
+        logId: m.logId,
+        sendAt: m.sendAt,
+        type: m.type,
+        message: m.message,
+        threadId: m.threadId,
+      }))
+    }
+  }
+  return ctx
 }
 async function ocOne() {
   save()
   if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
   const category = ($('ocCat').value || 'RIGHT').trim().toUpperCase()
   const ctx = ctxWithInject()
+  const extraCount = Array.isArray(ctx.extraLogs) ? ctx.extraLogs.length : 0
+  const msgTag = '메시지 ' + (1 + extraCount) + '개' + (extraCount ? ' (주+추가 ' + extraCount + ')' : '')
   const repeat = Math.max(1, Math.min(50, parseInt($('ocRepeat').value, 10) || 1))
   if (repeat === 1) {
-    $('out').textContent = '발사 1회 (' + category + ') …' + (ctx.injectText ? ' [조작문:' + ctx.injectText.slice(0, 40) + ']' : '')
+    $('out').textContent = '발사 1회 (' + category + ') · ' + msgTag + ' …' + (ctx.injectText ? ' [조작문:' + ctx.injectText.slice(0, 40) + ']' : '')
     try {
       const j = await post('/report/openchat-one', { ctx, category })
-      $('out').textContent = (j.msg || '') + '\n\n' + JSON.stringify(j, null, 1)
+      $('out').textContent = (j.msg || '') + ' · ' + msgTag + '\n\n' + JSON.stringify(j, null, 1)
     } catch (e) { $('out').textContent = '실패: ' + e.message }
     return
   }
   // N회 연속 — 같은 계정이 같은 (category, logId) 에 몇 번 꽂히는지 확인용
-  const lines = ['연속 ' + repeat + '회 · category=' + category + ' · l=' + pickedCtx.logId, '']
+  const lines = ['연속 ' + repeat + '회 · category=' + category + ' · ' + msgTag + ' · 주logId=' + pickedCtx.logId, '']
   let ok = 0
   $('out').textContent = lines.join('\n') + '\n발사 중… 0/' + repeat
   for (let i = 1; i <= repeat; i++) {
