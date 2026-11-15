@@ -452,8 +452,11 @@ export async function reportAndBlock(ctx, category, opts = {}) {
 // LOGINLIST partial snapshot 상황에서도 linkId 만 알면 바로 작동. 서버가 chatLogs 와
 // 별도 심사 큐 쓸 가능성 매우 큼 — silent-accept 돌파 결정적 후보.
 export function buildLinkBody(linkId, category, attachmentPaths) {
-  const linkStr = longStr(linkId)
-  const cat = jsonEscape(normalizeCategory(category))
+  // v59-A §4 — /link body 도 strictLong 가드. 'abc' 가 조용히 '0' 으로 바뀌던 걸 throw.
+  const linkStr = strictLong(linkId, 'linkId')
+  const catWire = normalizeCategory(category)
+  if (!CATEGORIES.includes(catWire)) throw new Error('카테고리 잘못: ' + category)
+  const cat = jsonEscape(catWire)
   // kotlinx-serialization 선언 순서: category → linkId → attachmentPaths
   // attachmentPaths 는 nullable — 비어있을 때 생략 (public 신고는 첨부 없음)
   let raw
@@ -468,7 +471,12 @@ export function buildLinkBody(linkId, category, attachmentPaths) {
 
 export async function reportLink(linkId, category, opts = {}) {
   if (!linkId) return { ok: false, text: 'linkId 필요' }
-  const body = buildLinkBody(linkId, category, opts.attachmentPaths)
+  let body
+  try {
+    body = buildLinkBody(linkId, category, opts.attachmentPaths)
+  } catch (e) {
+    return { ok: false, stage: 'assertShape', text: '가드 실패: ' + String(e && e.message ? e.message : e) }
+  }
   const includeApkHeaders = opts.includeApkHeaders === false ? false : true
   const r = await hit(body, {
     cred: opts.cred,
