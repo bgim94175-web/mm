@@ -9,7 +9,6 @@
 //                  배열 안 각 원소 = { u, m:{message,referer,revision}, s, t, l, scope, threadId? }
 //                  (Lyud1;->f + Lyud1;->j 가 조립)
 import { get as getCred } from './report-auth.mjs'
-import { randomUUID } from 'node:crypto'
 
 export const HOST = 'https://open.kakao.com'
 export const PATH = '/c/fraud/report/chatLogs'
@@ -23,27 +22,24 @@ export const CATEGORIES = [
 const GAP = 400
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// APK 26.8.3 dex 분석 확정:
-//   dbg (CustomHeaderInterceptorFactory) + bi90 (KT 공통) + s0 (ADID) + vde0 (OpenLink)
-// 이 체인에서 openchat 요청에 실제로 붙는 헤더:
-//   - Authorization: oauthToken 만 (c4c0.i() — **`-duuid` 접미사 없음**).
-//     프로필 신고(/talk/profile25/report) 경로만 duuid 를 붙임 — 이 경로는 아님.
-//   - A: android/26.8.3/ko
-//   - C: 요청마다 랜덤 UUID v4 (correlation id — 서버 로그 추적용)
-//   - Accept-Language: ko
-//   - User-Agent: KT/26.8.3 An/13 ko  (Build.VERSION.RELEASE → Android 13)
-//   - ADID: Google Advertising ID — 봇은 안 보내는 게 추적 회피에 유리하므로 생략
+// 라이브 테스트 (2026-11-15 03:10) status=-500 발생 → rp-v34 의 "APK-exact" 변경
+// (Authorization 에서 -duuid 제거 · C UUID 추가 · Accept-Language 복원) 중 뭔가가
+// 서버 거부 유발. 라이브에서 실제 통한 2026-11-14 ★ 접수 포맷으로 완전 복귀.
+//   - Authorization: oauthToken-duuid  (APK bi90 분석은 bare 라 했지만 다른 interceptor
+//                                       가 더 붙이거나 이 endpoint 는 양쪽 다 받는 듯 —
+//                                       어쨌든 라이브에서 통한 포맷이 정답)
+//   - C 헤더 제거                     (추측 헤더 — 서버가 거부했을 가능성)
+//   - Accept-Language 제거             (추측 헤더 — 서버가 거부했을 가능성)
+// User-Agent / A / Content-Type / Accept 는 성공 로그와 동일한 셋이라 유지.
 function authHeader() {
   const c = getCred()
   if (!c || !c.oauthToken) throw new Error('로그인 안 됨')
   return {
-    'Authorization': c.oauthToken,
-    'A': 'android/26.8.3/ko',
-    'C': randomUUID(),
-    'Accept-Language': 'ko',
-    'User-Agent': 'KT/26.8.3 An/13 ko',
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
+    'authorization': c.oauthToken + '-' + c.duuid,
+    'content-type': 'application/json',
+    'accept': 'application/json',
+    'user-agent': 'KT/26.8.3 An/13 ko',
+    'a': 'android/26.8.3/ko',
   }
 }
 
