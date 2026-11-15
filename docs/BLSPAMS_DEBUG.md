@@ -62,7 +62,7 @@ yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), r
 **헤더 체인 (dbg → bi90 → s0 → vde0)**:
 | 헤더 | 값 | 비고 |
 |---|---|---|
-| Authorization | `{oauthToken}` | **`-duuid` 접미사 없음** (c4c0.i() 리턴) |
+| Authorization | `{oauthToken}-{duuid}` | **2026-11-15 재분석으로 정정** — c4c0.h(oauthToken)=`append(oauthToken).append("-").append(wux.t()/*duuid*/)` 확정. c4c0.p() true 일 때만 세팅. 이전 "접미사 없음" 주장은 틀렸음 |
 | A | `android/26.8.3/ko` | `"android/" + ver + "/" + locale` |
 | C | `{UUID v4}` | 요청마다 랜덤 correlation ID |
 | Accept-Language | `ko` | `om50.a.a() = Locale.getDefault().getLanguage()` |
@@ -73,10 +73,40 @@ yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), r
 | X-VC | — | 로그인/signup 전용 (gun1), 신고엔 없음 |
 
 **rp-v34 반영**:
-- Authorization 에서 `-duuid` 제거 (라이브 로그는 `-duuid` 로도 200 받았지만 APK 기준으로 통일)
+- ~~Authorization 에서 `-duuid` 제거~~ → **되돌림 (rp-v44)**. APK 재분석 결과 `-duuid` 가 정답.
 - `C: UUID v4` 추가 (`randomUUID()` from node:crypto)
 - `Accept-Language: ko` 복원 (bi90 증거)
 - `threadId:'0'` 포함 조건 완화 (0 도 유효 Long)
+
+### ★★★ 2026-11-15 2차 APK 재분석 — 신고 체인 전체 콜 그래프 ★★★
+
+`submitOlkChatroomReport` dispatcher = `Lsc;->b(Action, rg61, Cont)`. Action sealed class 4종이 각자 분기:
+
+| Action | invoke 함수 | 실제 호출 |
+|---|---|---|
+| **Report** (메인) | `Lsc$c` | `/c/fraud/report/chatLogs` POST — 유일한 서버측 호출 |
+| **Leave** | `Lsc$d.invokeSuspend` | `w4a.U(chatId)→ll9` 얻고 `bly.d(linkId)→OpenLink`, 오너면 `AbuseReportOlkOwnerLeaveChatroomException`, 아니면 `Lbly$d;->d(J,Runnable)` → LOCO 방 나가기 (정확한 메서드명 확정 안 됨) |
+| **Block** | `Lsc$b.invokeSuspend` | `ll9.J1(friendId)` 멤버 검증 후 `Lbly$d;->h(ll9, Friend, Z, Runnable)` → openlink repo block |
+| **Blind** | `Lsc$a.invokeSuspend` | `d1e0.o(chatLogId)` 로 chatLog 조회 후 `Lbly$d;->b(ll9, Friend, reason, text, Runnable, Runnable)` → openlink repo 가 LOCO emit |
+| **Rewrite** | `Lsc$e.invokeSuspend` | `Rewrite.i()/j()/l()` 3개 List 추출 후 `Lbly$d;->c(J, ll9, List, List, List, String, String, I, Runnable)` → openlink repo rewrite |
+
+**결론 1**: `/chatLogs` POST 외에 서버에 추가로 때리는 HTTP 는 없음. "신고하고 나가기" = Report POST 1회 → Leave LOCO 1회의 **클라이언트 순차 호출**. 서버가 두 번째 호출을 보고 "더 강한 처리"를 트리거하지 않음.
+
+**결론 2 ★**: 봇 `reportOne()` / `fanout()` 은 바이트·필드 레벨로 **APK 와 완전 일치**. http=200/status=0 접수인데 실제 제재가 안 걸린다면 **코드 결함 아님** — 서버 심사 큐에 들어가 있는 상태. 핵심 레버는:
+  a) **fanout 다계정 동시 신고로 임계 돌파** (현재 라이브 로그상 fireAll 단독만 돌고 fanout 은 거의 안 돎)
+  b) 계정별 간격·지터 충분해서 어뷰징 필터 안 걸리게
+  c) 메시지 원문 보존 (injectText 는 opt-in, 이미 rp-v44 에서 처리)
+
+### ★★★ 2026-11-15 BLSPAMS 바디 재검증 (2차 분석) ★★★
+
+전담 Job 클래스 `Lcom/kakao/talk/core/loco/protocol/job/a;->f(yy50$a)` 조립 **8필드 확정 (순서대로)**:
+`st:int, c:long, ls:List<long>, ss:List<long>, lds:List<string>, lts:List<int>, sr:int, bi:Boolean(st==3 조건부)`
+
+**→ 봇 `report-msg.mjs::callOne` 바디와 100% 일치, 누락/추가 없음.** BLSPAMS -301 은 바디 문제 **아님**. 세션 상태 (멤버 권한·채팅방 소속·anti-abuse 리스트) 로 서버가 거부하는 것. 일반방 1:1/단체 바디 레벨 분기 없음 (payload 동일).
+
+응답 모양: `{r:int, f:bool, l:List<long>, ts:List<int>, dl:List<long>, pr:int}`.
+
+CHATONROOM 같은 선행 LOCO 의존성은 Job 클래스 레벨에는 코드로 **명시 안 됨** — LOCO connection manager 가 유지하는 세션 상태 (멤버 리스트·방 입장 플래그) 에 서버가 의존하는 것으로 추정.
 
 ### ★★★ 2026-11-15 category enum → 공식 분류 매핑 확정 (APK 26.8.3 resources.arsc) ★★★
 
