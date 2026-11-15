@@ -152,9 +152,22 @@ function logItem(lg, isPrimary, ctx) {
     rawMsg = String(lg.message || '')
   }
   const msg = jsonEscape(rawMsg)
+  // ★ 11차 반영: m 안의 attachment · referer · revision 을 원본 chatLog 값 그대로.
+  //   attachment 는 chatLog 의 raw string — length>0 일 때만 put (yud1.j 로직 그대로).
+  //   referer/revision 은 int, 원본값 없으면 0.
+  const attachmentRaw = (lg.attachment != null ? String(lg.attachment) : '')
+  const referer = Number.isFinite(Number(lg.referer)) ? Number(lg.referer) : 0
+  const revision = Number.isFinite(Number(lg.revision)) ? Number(lg.revision) : 0
+  const mParts = ['"message":"' + msg + '"']
+  if (attachmentRaw.length > 0) {
+    // attachment 는 보통 이미 JSON string. 그대로 string value 로 encode.
+    mParts.push('"attachment":"' + jsonEscape(attachmentRaw) + '"')
+  }
+  mParts.push('"referer":' + referer)
+  mParts.push('"revision":' + revision)
   const parts = [
     '"u":' + u,
-    '"m":{"message":"' + msg + '","referer":0,"revision":0}',
+    '"m":{' + mParts.join(',') + '}',
     '"s":' + s,
     '"t":' + t,
     '"l":' + l,

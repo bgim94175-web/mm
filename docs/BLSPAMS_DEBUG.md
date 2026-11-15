@@ -97,6 +97,35 @@ yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), r
   b) 계정별 간격·지터 충분해서 어뷰징 필터 안 걸리게
   c) 메시지 원문 보존 (injectText 는 opt-in, 이미 rp-v44 에서 처리)
 
+### 2026-11-15 11차 — chatLog 원본 필드 반영 (attachment · referer · revision)
+
+사용자 "최종 점검" 요청으로 11차 Fork. 지금까지 10번 분석에도 **"접수는 되는데 처분 안 걸림"** 의 결정적 이유 미확정. 11차 결과:
+
+**가장 큰 미반영 (A)**: `yud1.g` 가 chatLog 의 **`M.q()` = 긴글 조각 JSONArray** 를 iterate 해서 각 조각마다 **별개 로그 항목** 추가 (`message + enc + revision`). 봇은 primary 1건만. **홍보 메시지는 대부분 긴 글** 이라 봇이 N-1개 누락. 서버 cross-check 하면 drop.
+
+**(B)**: `yud1.i` 는 chatLog 원본 `S()` (attachment JSONObject), `h1()` (int), `k2l1.r()` (int) 직접 전달. 봇은 전부 `null/0`. 링크카드·광고 메시지는 바디 불일치.
+
+**봇 반영 (rp-v64)**:
+- `report-browse.mjs::messages()` 가 chatLog 원본의 `attachment`, `referer`, `revision` 담아 UI 로 전달
+- `report-openchat.mjs::logItem` 가 ctx.attachment 가 length>0 일 때만 m 안에 put (yud1.j 로직 그대로)
+- referer/revision 도 원본값 (없으면 0 fallback)
+- UI pickMsg + extraLogs 둘 다 전달
+
+**바이트 검증**:
+```
+attachment 없음 (일반 텍스트): "m":{"message":"...","referer":0,"revision":0}
+attachment 있음 (링크 카드):   "m":{"message":"...","attachment":"{\"name\":...}","referer":5,"revision":2}
+```
+
+**(A) 긴글 조각 iteration 은 별개 작업** — 긴 글의 조각은 chatLog 의 attachment 안에 포함되어 봇이 가져오긴 하는데, 그걸 **별개 chatLogInfos 항목으로 분해** 하는 로직은 미구현. 긴 홍보 메시지가 신고 대상이면 추가 작업 필요.
+
+### 그 외 11차 확정
+
+- chatLogs POST 성공 후 **추가 호출 없음 확정** (sc$c.invokeSuspend 가 1회 POST 후 바로 return)
+- **멤버십 선호출 없음 확정** (CHATONROOM/NOTIREAD/MEMBER 호출 전무)
+- ADID 교차검증은 서버 영역 — matrix 상 영향 없음 재확인
+- 쿠키 체인 없음, Content-Length 자동, Device fingerprint 는 ADID+A+User-Agent 가 전부
+
 ### ★★★★★ 2026-11-15 10차 — 8차 category 결론 공식 정정 ★★★★★
 
 **라이브 4-mode matrix 결과 (같은 chatLog)**:

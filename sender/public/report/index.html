@@ -599,6 +599,10 @@ async function pickMsg(chatId, logId, authorId, m) {
     message: (m && m.message) || '',
     nick: (m && m.nick) || '',
     type: (m && m.type) || 1,
+    // ★ 11차 반영: 원본 chatLog 의 attachment/referer/revision 전달
+    attachment: (m && m.attachment) || '',
+    referer: (m && m.referer) || 0,
+    revision: (m && m.revision) || 0,
   })
   renderMsgs(); updatePickBanner()
   const pb = $('profBox'); pb.classList.remove('hide'); pb.textContent = '오픈프로필 조회 중…'
@@ -694,6 +698,10 @@ function ctxWithInject() {
         // ocInjectAll 켜져 있으면 extra 메시지도 inject 문장으로 교체. OFF 면 실제 원문.
         message: injectAll ? inject : m.message,
         threadId: m.threadId,
+        // ★ 11차: extra 도 원본 chatLog 필드 그대로
+        attachment: m.attachment || '',
+        referer: m.referer || 0,
+        revision: m.revision || 0,
       }))
     }
   }

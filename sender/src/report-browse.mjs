@@ -228,14 +228,23 @@ export async function messages(chatId, cnt) {
   }
 
   // 최신순 정렬 후 상위 N (slice 를 sort 뒤에 — 그래야 최신 N 개)
+  // ★ 11차 반영: 봇이 신고 시 attachment 원본 · referer · revision · 긴글 조각 전부
+  // 넘겨야 서버 cross-check 통과. 그래서 여기서 raw chatLog 필드도 담아 보냄.
   const items = logs.map((log) => {
     const text = typeof log.message === 'string' ? log.message : ''
+    const attachmentRaw = typeof log.attachment === 'string' ? log.attachment : ''
+    const referer = Number(log.referer != null ? log.referer : (log.ref != null ? log.ref : 0)) || 0
+    const revision = Number(log.revision != null ? log.revision : (log.rev != null ? log.rev : 0)) || 0
     return {
       logId: toIdString(log.logId),
       authorId: toIdString(log.authorId),
       type: Number(log.type),
       sendAt: Number(log.sendAt) || 0,
       message: text.slice(0, 200),
+      // 서버 cross-check 용 원본값 (11차 발견)
+      attachment: attachmentRaw,     // chatLog.S() 상당 — JSONObject 또는 string
+      referer,                        // chatLog.h1()
+      revision,                       // chatLog.M.r()
       nick: '',  // 아래에서 채움
     }
   })
