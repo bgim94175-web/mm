@@ -9,6 +9,7 @@ import * as MSG from './report-msg.mjs'
 import * as BROWSE from './report-browse.mjs'
 import * as OPEN from './report-openchat.mjs'
 import * as ACC from './report-accounts.mjs'
+import * as WATCH from './report-watch.mjs'
 import * as DB from './report-db.mjs'
 
 const PORT = Number(process.env.PORT || 8080)
@@ -307,6 +308,30 @@ async function handle(req, res) {
     }
     const r = await queue(function () { return BROWSE.messagesByAuthor(c, uid, cnt) })
     return send(res, 200, r)
+  }
+
+  // 서버 측 백그라운드 감시 — PWA 닫거나 새로고침해도 계속 polling
+  if (p === '/report/watch/list') {
+    return send(res, 200, { ok: true, items: WATCH.list(), intervalMs: 30000 })
+  }
+  if (p === '/report/watch/status') {
+    const c = String(u.searchParams.get('c') || ''); const uid = String(u.searchParams.get('uid') || '')
+    if (!c || !uid) return send(res, 400, { ok: false, error: 'c/uid' })
+    return send(res, 200, Object.assign({ ok: true }, WATCH.status(c, uid)))
+  }
+  if (p === '/report/watch/add' && req.method === 'POST') {
+    const b = await readBody(req)
+    if (!b.chatId || !b.userId) return send(res, 400, { ok: false, error: 'chatId/userId' })
+    if (!LOCO.ready()) { try { await LOCO.connect() } catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message) }) } }
+    return send(res, 200, WATCH.add(String(b.chatId), String(b.userId)))
+  }
+  if (p === '/report/watch/remove' && req.method === 'POST') {
+    const b = await readBody(req)
+    if (!b.chatId || !b.userId) return send(res, 400, { ok: false, error: 'chatId/userId' })
+    return send(res, 200, WATCH.remove(String(b.chatId), String(b.userId)))
+  }
+  if (p === '/report/watch/clear' && req.method === 'POST') {
+    return send(res, 200, WATCH.removeAll())
   }
 
   // 대상 유저의 이용제한 감지 — 오픈프로필 fetch + MEMBER 상태 체인

@@ -481,6 +481,8 @@ async function pickMsg(chatId, logId, authorId, m) {
       pb.textContent = '오픈프로필: ' + (j.text || '없음') + ' (닉 ' + (j.nick || '-') + ')'
     }
   } catch (e) { pb.textContent = '오픈프로필 실패: ' + e.message }
+  // 메시지 선택 직후 — 이 대상에 대한 감시가 이미 서버에 등록돼있는지 확인해서 UI 복원
+  try { restoreWatches() } catch (e) {}
 }
 
 async function loadMembers() {
@@ -696,61 +698,118 @@ async function ocDedupeVerdict() {
   $('out').textContent = lines.join('\n')
 }
 
-// 🔍 처분 감지 — 대상 유저 상태 조회
-let pollTargetTimer = null
+// 🔍 처분 감시 — 서버 측 백그라운드 polling (PWA 닫거나 새로고침해도 유지).
+// 페이지 쪽은 (1) 서버에 add/remove, (2) 열려있을 때 30초마다 서버 상태 조회.
+let clientPollTimer = null
+let alertedLimitedKeys = {}
+
+function renderTargetBox(j) {
+  const box = $('targetStatusBox')
+  if (!j || !j.summary) { box.textContent = j && j.text ? j.text : '대기…'; box.style.background = '#1b1b1b'; return }
+  const colorMap = { LIMITED: '#5c1a3a', ACTIVE: '#1a5c3a', UNKNOWN: '#3a3a1a' }
+  box.style.background = colorMap[j.summary] || '#1b1b1b'
+  const sigOP = j.signals && j.signals.openProfile || {}
+  const sigMem = j.signals && j.signals.member || {}
+  const lines = []
+  lines.push('[' + j.summary + '] ' + (j.text || ''))
+  if (j.limitedAt) lines.push('★ 처분 감지 시각: ' + new Date(j.limitedAt).toLocaleString('ko-KR'))
+  lines.push('')
+  lines.push('── 오픈프로필 fetch ──')
+  if (sigOP.skipped) lines.push('  ' + sigOP.skipped)
+  else {
+    lines.push('  httpCode=' + sigOP.httpCode + (sigOP.limited ? ' ★제한감지' : '') + ' bodyLen=' + (sigOP.bodyLength || 0))
+    if (sigOP.matchedPattern) lines.push('  매치 패턴: ' + sigOP.matchedPattern)
+    if (sigOP.err) lines.push('  err: ' + sigOP.err)
+  }
+  lines.push('── LOCO MEMBER ──')
+  lines.push('  found=' + !!sigMem.found + ' nick="' + esc(sigMem.nick || '') + '" ptp=' + sigMem.ptp)
+  if (sigMem.err) lines.push('  err: ' + sigMem.err)
+  lines.push('')
+  lines.push('⏱ 마지막 서버 체크: ' + (j.lastCheck ? new Date(j.lastCheck).toLocaleString('ko-KR') : '-'))
+  box.textContent = lines.join('\n')
+}
+
 async function checkTargetStatus() {
   if (!pickedCtx || !pickedCtx.chatId || !pickedCtx.authorId) { $('targetStatusBox').textContent = '방 → 메시지 탭 먼저'; return }
-  const box = $('targetStatusBox'); box.textContent = '조회 중…'
+  const box = $('targetStatusBox')
   try {
+    // 감시 중이면 서버가 쌓아둔 결과 가져옴, 아니면 즉석 1회 체크
+    const ws = await fetch('/report/watch/status?c=' + encodeURIComponent(pickedCtx.chatId) + '&uid=' + encodeURIComponent(pickedCtx.authorId) + '&k=' + encodeURIComponent($('k').value))
+    const wj = await ws.json()
+    if (wj.watching && wj.summary) { renderTargetBox(wj); afterRender(wj); return }
+    // 즉석 체크
+    box.textContent = '조회 중…'
     const r = await fetch('/report/target-status?c=' + encodeURIComponent(pickedCtx.chatId) + '&uid=' + encodeURIComponent(pickedCtx.authorId) + '&k=' + encodeURIComponent($('k').value))
     const j = await r.json()
     if (!j.ok) { box.textContent = '실패: ' + esc(j.text || JSON.stringify(j)); return }
-    const colorMap = { LIMITED: '#5c1a3a', ACTIVE: '#1a5c3a', UNKNOWN: '#3a3a1a' }
-    box.style.background = colorMap[j.summary] || '#1b1b1b'
-    const sigOP = j.signals && j.signals.openProfile || {}
-    const sigMem = j.signals && j.signals.member || {}
-    const lines = []
-    lines.push('[' + j.summary + '] ' + (j.text || ''))
-    lines.push('')
-    lines.push('── 오픈프로필 fetch ──')
-    if (sigOP.skipped) { lines.push('  ' + sigOP.skipped) }
-    else {
-      lines.push('  httpCode=' + sigOP.httpCode + (sigOP.limited ? ' ★제한감지' : '') + ' bodyLen=' + (sigOP.bodyLength || 0))
-      if (sigOP.matchedPattern) lines.push('  매치 패턴: ' + sigOP.matchedPattern)
-      if (sigOP.err) lines.push('  err: ' + sigOP.err)
-      if (sigOP.finalUrl && sigOP.finalUrl !== sigOP.url) lines.push('  → 리다이렉트: ' + sigOP.finalUrl)
-    }
-    lines.push('── LOCO MEMBER ──')
-    lines.push('  found=' + !!sigMem.found + ' nick="' + esc(sigMem.nick || '') + '" ptp=' + sigMem.ptp + (sigMem.url ? ' url=' + sigMem.url : ''))
-    if (sigMem.err) lines.push('  err: ' + sigMem.err)
-    lines.push('')
-    lines.push('⏱ ' + new Date().toLocaleString('ko-KR'))
-    box.textContent = lines.join('\n')
+    renderTargetBox(j)
+    afterRender(j)
   } catch (e) { box.textContent = '실패: ' + e.message }
 }
-function togglePollTarget() {
+
+function afterRender(j) {
+  if (!j || j.summary !== 'LIMITED') return
+  const k = (pickedCtx && pickedCtx.chatId) + '::' + (pickedCtx && pickedCtx.authorId)
+  if (alertedLimitedKeys[k]) return
+  alertedLimitedKeys[k] = true
+  try { if (Notification && Notification.permission === 'granted') new Notification('★ 처분 감지!', { body: j.text || '' }) } catch (e) {}
+  try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]) } catch (e) {}
   const btn = $('pollBtn')
-  if (pollTargetTimer) {
-    clearInterval(pollTargetTimer); pollTargetTimer = null
-    btn.textContent = '자동 감시 시작 (30초 간격)'
+  btn.textContent = '★ 처분 감지됨 (' + new Date(j.limitedAt || Date.now()).toLocaleString('ko-KR') + ') · 눌러서 중지'
+  btn.style.background = '#c0392b'
+}
+
+async function togglePollTarget() {
+  if (!pickedCtx || !pickedCtx.chatId || !pickedCtx.authorId) { $('targetStatusBox').textContent = '방 → 메시지 탭 먼저'; return }
+  const btn = $('pollBtn')
+  // 현재 서버에 등록돼있는지
+  let watching = false
+  try {
+    const ws = await fetch('/report/watch/status?c=' + encodeURIComponent(pickedCtx.chatId) + '&uid=' + encodeURIComponent(pickedCtx.authorId) + '&k=' + encodeURIComponent($('k').value))
+    const wj = await ws.json()
+    watching = !!wj.watching
+  } catch (e) {}
+
+  if (watching) {
+    // 중단
+    await post('/report/watch/remove', { chatId: pickedCtx.chatId, userId: pickedCtx.authorId })
+    if (clientPollTimer) { clearInterval(clientPollTimer); clientPollTimer = null }
+    btn.textContent = '자동 감시 시작 (서버 polling)'
     btn.style.background = ''
     return
   }
-  pollTargetTimer = setInterval(() => {
-    checkTargetStatus()
-    // LIMITED 감지되면 자동 중지 + 알림
-    if ($('targetStatusBox').textContent.indexOf('[LIMITED]') === 0) {
-      clearInterval(pollTargetTimer); pollTargetTimer = null
-      btn.textContent = '★ 처분 감지됨 — 다시 시작'
-      btn.style.background = '#c0392b'
-      try { if (Notification && Notification.permission === 'granted') new Notification('★ 처분 감지!', { body: $('targetStatusBox').textContent.split('\n')[0] }) } catch (e) {}
-      try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]) } catch (e) {}
-    }
-  }, 30000)
-  checkTargetStatus()
-  btn.textContent = '감시 중… (30초 간격) · 눌러서 중지'
+  // 시작
+  await post('/report/watch/add', { chatId: pickedCtx.chatId, userId: pickedCtx.authorId })
+  btn.textContent = '감시 중… 서버 polling (새로고침·닫아도 유지) · 눌러서 중지'
   btn.style.background = '#1a5c3a'
   try { if (Notification && Notification.permission === 'default') Notification.requestPermission() } catch (e) {}
+  checkTargetStatus()
+  // 페이지 열려있는 동안은 30초마다 refresh (서버 결과 확인용)
+  clientPollTimer = setInterval(checkTargetStatus, 30000)
+}
+
+// 페이지 로드 시 서버 감시 리스트 복원 — 현재 pickedCtx 가 있으면 자동 상태 반영
+async function restoreWatches() {
+  try {
+    const r = await fetch('/report/watch/list' + q())
+    const j = await r.json()
+    if (!j.ok || !Array.isArray(j.items)) return
+    // 현재 선택된 pickedCtx 가 감시 리스트에 있으면 UI 복원
+    if (pickedCtx && pickedCtx.chatId && pickedCtx.authorId) {
+      const hit = j.items.find((w) => String(w.chatId) === String(pickedCtx.chatId) && String(w.userId) === String(pickedCtx.authorId))
+      if (hit) {
+        const btn = $('pollBtn')
+        btn.textContent = '감시 중… 서버 polling (새로고침·닫아도 유지) · 눌러서 중지'
+        btn.style.background = '#1a5c3a'
+        renderTargetBox(hit)
+        if (!clientPollTimer) clientPollTimer = setInterval(checkTargetStatus, 30000)
+        if (hit.summary === 'LIMITED') afterRender(hit)
+      }
+    }
+    // 다른 감시 중 유저가 LIMITED 상태이면 상단에 요약 배너 (옵션 — 지금은 콘솔만)
+    const limited = j.items.filter((w) => w.summary === 'LIMITED')
+    if (limited.length) console.log('[watch] 서버에 LIMITED 감지 ' + limited.length + '건', limited)
+  } catch (e) {}
 }
 
 async function ocFanout() {
