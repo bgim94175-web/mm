@@ -595,14 +595,17 @@ async function pickMsg(chatId, logId, authorId, m) {
   $('c').value = chatId; $('l').value = logId; $('uid').value = authorId; save()
   pickedCtx = Object.assign(pickedCtx || {}, {
     chatId, logId, authorId,
-    sendAt: (m && m.sendAt) || 0,
+    // ★ v59-A D0 연쇄: null 값 그대로 전달. referer/revision 이 0 으로 자동 채워지면
+    // 신고 바디에 "referer":0 가 강제로 붙어 앱 바이트와 다름. logItem 이 null 이면 키 생략.
+    sendAt: m && m.sendAt != null ? m.sendAt : null,
     message: (m && m.message) || '',
     nick: (m && m.nick) || '',
-    type: (m && m.type) || 1,
-    // ★ 11차 반영: 원본 chatLog 의 attachment/referer/revision 전달
-    attachment: (m && m.attachment) || '',
-    referer: (m && m.referer) || 0,
-    revision: (m && m.revision) || 0,
+    type: m && m.type != null ? m.type : null,
+    attachmentJson: m && m.attachmentJson != null ? m.attachmentJson : null,
+    referer: m && m.referer != null ? m.referer : null,
+    revision: m && m.revision != null ? m.revision : null,
+    scope: m && m.scope != null ? m.scope : null,
+    threadId: m && m.threadId != null ? m.threadId : null,
   })
   renderMsgs(); updatePickBanner()
   const pb = $('profBox'); pb.classList.remove('hide'); pb.textContent = '오픈프로필 조회 중…'
@@ -674,34 +677,54 @@ async function pickMember(userId) {
   } catch (e) { $('msgList').innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
 }
 function ctxWithInject() {
-  // "주입할 문장" 이 비어있지 않아도 ocEnableInject 체크해야만 실제로 보냄 (기본 OFF).
-  // 라이브 로그상 조작문 주입 시 http=200/status=0 로 silent-accept 되지만 실제 제재가 안 걸림
-  // → 서버가 u·l 조합으로 DB 원문 cross-check 하는 걸로 강력 추정. 기본은 원문.
+  // ★ v59-A D9: 이웃 선택은 "선택 지점 기준 시간 인접" 으로 바뀜. 이전엔 __msgs 가 최신순이라
+  // slice(0,4) 가 "선택 메시지보다 더 최신 4개" 만 잡았다. 중간이나 오래된 메시지를 고르면
+  // 뒤쪽이 빈다. 선택 index 기준 [i-2, i+2] 에서 같은 저자, 자기 제외, 최대 4개. 부족하면
+  // [i-4, i+4] 로 확장.
+  // ★ v59-A D8: extra 는 ctx.injectText 로 덮지 않음. 각 아이템이 자기 injectText 를 쓰고
+  // 없으면 원문. ocInjectAll 켜도 primary 만 ctx.injectText, extra 는 자기 injectText.
   const injectEnabled = !!($('ocEnableInject') && $('ocEnableInject').checked)
   const inject = ($('txt').value || '').trim()
   const injectAll = injectEnabled && $('ocInjectAll') && $('ocInjectAll').checked && inject
   const ctx = Object.assign({}, pickedCtx, (injectEnabled && inject) ? { injectText: inject, enableInject: true } : {})
   if ($('ocBatch') && $('ocBatch').checked && window.__msgs && pickedCtx && pickedCtx.authorId) {
-    // 카카오 앱 공식 UI 제한: 한 요청에 chatLogInfos 최대 5개. primary 1 + extra 4 까지.
-    // 서버도 같은 bound 를 체크할 가능성 높음 — 초과하면 전체 요청 거부 위험.
-    // 최신순(window.__msgs 가 이미 최신순) 중 같은 저자 상위 4개만.
-    const sameAuthor = window.__msgs.filter((m) =>
-      String(m.authorId) === String(pickedCtx.authorId) &&
-      String(m.logId) !== String(pickedCtx.logId)
-    ).slice(0, 4)
-    if (sameAuthor.length) {
-      ctx.extraLogs = sameAuthor.map((m) => ({
+    const msgs = window.__msgs
+    const i = msgs.findIndex((m) => String(m.logId) === String(pickedCtx.logId))
+    const pickNeighbors = (radius) => {
+      if (i < 0) return []
+      const out = []
+      for (let r = 1; r <= radius; r++) {
+        for (const j of [i - r, i + r]) {
+          if (j < 0 || j >= msgs.length) continue
+          const m = msgs[j]
+          if (String(m.authorId) !== String(pickedCtx.authorId)) continue
+          if (String(m.logId) === String(pickedCtx.logId)) continue
+          if (out.some((x) => String(x.logId) === String(m.logId))) continue
+          out.push(m)
+          if (out.length >= 4) return out
+        }
+      }
+      return out
+    }
+    let neighbors = pickNeighbors(2)
+    if (neighbors.length < 4) neighbors = pickNeighbors(4)
+    if (neighbors.length) {
+      ctx.extraLogs = neighbors.map((m) => ({
         authorId: m.authorId,
         logId: m.logId,
         sendAt: m.sendAt,
         type: m.type,
-        // ocInjectAll 켜져 있으면 extra 메시지도 inject 문장으로 교체. OFF 면 실제 원문.
-        message: injectAll ? inject : m.message,
-        threadId: m.threadId,
-        // ★ 11차: extra 도 원본 chatLog 필드 그대로
-        attachment: m.attachment || '',
-        referer: m.referer || 0,
-        revision: m.revision || 0,
+        // D8: extra 는 자기 injectText 만. injectAll 모드면 extra 에도 자기 injectText 를 심지만
+        // 원래 injectText 가 비어있으면 원문 유지 (ctx.injectText 로 덮지 않는다).
+        injectText: injectAll ? inject : null,
+        enableInject: injectAll,
+        message: m.message,
+        // D0 신규 필드명 (attachmentJson). 원본값이 null 이면 키 생략됨.
+        attachmentJson: m.attachmentJson != null ? m.attachmentJson : null,
+        referer: m.referer != null ? m.referer : null,
+        revision: m.revision != null ? m.revision : null,
+        scope: m.scope != null ? m.scope : null,
+        threadId: m.threadId != null ? m.threadId : null,
       }))
     }
   }
