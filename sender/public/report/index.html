@@ -100,11 +100,18 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
 
   <div id="pickBanner" class="pickBanner empty">아직 아무 메시지도 선택 안 됨 — 위에서 방 → 메시지 순서로 고르면 아래 신고 섹션이 활성화됨</div>
 
+  <div style="border:1px solid #3b6ef5;border-radius:12px;padding:12px;margin:14px 0;background:#0e1a2d">
+    <div style="color:#9cf;font-weight:600;margin-bottom:6px">📝 신고 본문 조작 (심사자 눈에 보이는 문장)</div>
+    <input id="txt" placeholder="비우면 실제 원문 그대로. 문장 넣으면 카카오 심사자료에 이 문장이 '저 유저가 쓴 글' 로 올라감.">
+    <label style="display:flex;align-items:center;gap:8px;margin-top:10px;color:#eee;font-size:13px">
+      <input type="checkbox" id="ocInjectAll" style="width:auto;margin:0">
+      <span>같은 저자 extra 메시지도 전부 이 문장으로 교체 (OFF 권장 — 복붙 신고로 보일 수 있음)</span>
+    </label>
+  </div>
+
   <label>대상 userId <span class="me" style="font-weight:normal">(메시지 클릭 시 자동 — 수동 입력도 가능)</span></label>
   <input id="uid" inputmode="numeric" placeholder="숫자만 — 메시지 클릭 시 자동">
   <div id="profBox" class="me hide" style="margin-top:6px"></div>
-  <label>주입할 문장 (선택 — 카카오 심사자료로 올라가는 "원문")</label>
-  <input id="txt" placeholder="비우면 글의 진짜 원문. 넣으면 이 문장이 신고 자료로 올라감.">
 
   <h2>프로필 신고</h2>
   <div class="g">
@@ -171,14 +178,17 @@ $('mth').value = st.mth || ''; $('rawM').value = st.rawM || ''; $('rawB').value 
 if (st.ocCat) $('ocCat').value = st.ocCat
 if (st.ocRepeat) $('ocRepeat').value = st.ocRepeat
 if (st.ocBatch) $('ocBatch').checked = true
+if (st.ocInjectAll) $('ocInjectAll').checked = true
 $('ocBatch').addEventListener('change', () => { save(); updatePickBanner() })
+$('ocInjectAll').addEventListener('change', () => { save(); updatePickBanner() })
+$('txt').addEventListener('input', () => { save(); updatePickBanner() })
 // change 는 blur/enter 때만 뜨므로 input 이벤트 + 500ms debounce 로 자연스럽게.
 let __msgCntT = null
 $('msgCnt').addEventListener('input', () => {
   clearTimeout(__msgCntT)
   __msgCntT = setTimeout(() => { if (pickedRoom) loadMsgs() }, 500)
 })
-const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value, ocCat: $('ocCat').value, ocRepeat: $('ocRepeat').value, ocBatch: $('ocBatch').checked }))
+const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value, ocCat: $('ocCat').value, ocRepeat: $('ocRepeat').value, ocBatch: $('ocBatch').checked, ocInjectAll: $('ocInjectAll').checked }))
 const q = () => '?k=' + encodeURIComponent($('k').value)
 
 async function post(path, body) {
@@ -295,10 +305,13 @@ function updatePickBanner() {
   const nick = pickedCtx.nick || '(닉 없음)'
   const snippet = esc(String(pickedCtx.message || '').slice(0, 60)) || '(빈 글)'
   const extra = (window.__msgs || []).filter((m) => String(m.authorId) === String(pickedCtx.authorId) && String(m.logId) !== String(pickedCtx.logId)).length
+  const inject = ($('txt') && $('txt').value || '').trim()
+  const injectAll = $('ocInjectAll') && $('ocInjectAll').checked && inject
   b.className = 'pickBanner'
   b.innerHTML = '선택됨 · <span class="k">' + esc(nick) + '</span> <span class="me">(uid ' + pickedCtx.authorId + ')</span>'
     + ' <span class="chip">주logId ' + pickedCtx.logId + '</span>'
     + ($('ocBatch') && $('ocBatch').checked ? '<span class="chip">+ 같은 저자 ' + extra + '개 자동</span>' : '')
+    + (inject ? '<span class="chip" style="background:#5c1a3a;color:#fcc">📝 조작: ' + esc(inject.slice(0, 30)) + (injectAll ? ' (전체)' : ' (주1개)') + '</span>' : '')
     + '<div class="me" style="margin-top:4px">"' + snippet + '"</div>'
 }
 
@@ -483,12 +496,11 @@ async function pickMember(userId) {
   } catch (e) { $('msgList').innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
 }
 function ctxWithInject() {
-  // "주입할 문장" 이 비어있지 않으면 원문 대신 그걸 서버에 보냄 (심사 자료 조작) — primary 메시지에만 적용.
+  // "주입할 문장" 이 비어있지 않으면 원문 대신 그걸 서버에 보냄 (심사 자료 조작).
+  // 기본: primary 메시지에만 적용. ocInjectAll 체크 시 extra 메시지도 전부 교체.
   const inject = ($('txt').value || '').trim()
+  const injectAll = $('ocInjectAll') && $('ocInjectAll').checked && inject
   const ctx = Object.assign({}, pickedCtx, inject ? { injectText: inject } : {})
-  // "같은 저자의 다른 메시지도 함께 신고" 체크 시 로드된 메시지 중 같은 authorId 를 extraLogs 로 담음.
-  // primary (현재 pickedCtx.logId) 는 중복 방지로 제외. 결과: 한 신고에 N개 메시지가 하나의
-  // chatLogInfos 배열로 들어감 — 앱의 "메시지 여러 개 체크해서 신고" 와 동일 경로.
   if ($('ocBatch') && $('ocBatch').checked && window.__msgs && pickedCtx && pickedCtx.authorId) {
     const sameAuthor = window.__msgs.filter((m) =>
       String(m.authorId) === String(pickedCtx.authorId) &&
@@ -500,7 +512,8 @@ function ctxWithInject() {
         logId: m.logId,
         sendAt: m.sendAt,
         type: m.type,
-        message: m.message,
+        // ocInjectAll 켜져 있으면 extra 메시지도 inject 문장으로 교체. OFF 면 실제 원문.
+        message: injectAll ? inject : m.message,
         threadId: m.threadId,
       }))
     }
