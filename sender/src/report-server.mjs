@@ -8,6 +8,7 @@ import * as LOCO from './report-loco.mjs'
 import * as MSG from './report-msg.mjs'
 import * as BROWSE from './report-browse.mjs'
 import * as OPEN from './report-openchat.mjs'
+import * as ACC from './report-accounts.mjs'
 import * as DB from './report-db.mjs'
 
 const PORT = Number(process.env.PORT || 8080)
@@ -221,6 +222,42 @@ async function handle(req, res) {
   if (p === '/report/openchat-one' && req.method === 'POST') {
     const b = await readBody(req)
     const r = await queue(function () { return OPEN.reportOne(b.ctx || b, String(b.category || 'SPAM')) })
+    return send(res, 200, r)
+  }
+  // 다계정 fanout — body { ctx, category, userIds?, gapMs? }
+  if (p === '/report/openchat-fanout' && req.method === 'POST') {
+    const b = await readBody(req)
+    const userIds = Array.isArray(b.userIds) ? b.userIds.map(String) : []
+    const gapMs = Number(b.gapMs) > 0 ? Number(b.gapMs) : 500
+    const r = await queue(function () { return OPEN.fanout(b.ctx || b, String(b.category || 'VIOLENT'), userIds, { gapMs }) })
+    return send(res, 200, r)
+  }
+
+  // ─── 다계정 관리 ───
+  if (p === '/report/accounts/list') {
+    const r = await ACC.list()
+    return send(res, 200, { ok: true, accounts: r })
+  }
+  if (p === '/report/accounts/add' && req.method === 'POST') {
+    const b = await readBody(req)
+    const r = await ACC.addLogin(String(b.email || ''), String(b.password || ''), b.deviceType === 'pc' ? 'pc' : 'tablet')
+    return send(res, 200, r)
+  }
+  if (p === '/report/accounts/add-passcode' && req.method === 'POST') {
+    const b = await readBody(req)
+    const r = await ACC.addPasscode(String(b.code || ''))
+    return send(res, 200, r)
+  }
+  if (p === '/report/accounts/remove' && req.method === 'POST') {
+    const b = await readBody(req)
+    if (!b.userId) return send(res, 400, { ok: false, error: 'userId' })
+    const r = await ACC.remove(String(b.userId))
+    return send(res, 200, r)
+  }
+  if (p === '/report/accounts/toggle' && req.method === 'POST') {
+    const b = await readBody(req)
+    if (!b.userId) return send(res, 400, { ok: false, error: 'userId' })
+    const r = await ACC.setActive(String(b.userId), !!b.active)
     return send(res, 200, r)
   }
 

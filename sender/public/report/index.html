@@ -75,6 +75,26 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <div class="row"><button onclick="doLogout()">로그아웃</button><button onclick="refreshMe()">새로고침</button><button onclick="locoReconnect()">LOCO 재연결</button></div>
   </div>
 
+  <div class="card">
+    <h2 style="margin-top:0">계정 풀 (신고 fanout)</h2>
+    <div class="me" style="margin-bottom:8px">LOCO 세션은 primary 계정 1개만. 추가 계정들은 HTTP 신고 발사에만 쓰임. 각자 체크 해제하면 fanout 에서 제외.</div>
+    <div id="accList" class="list"><div class="item">로딩…</div></div>
+    <div class="row" style="margin-top:10px"><button onclick="refreshAccounts()">계정 목록 새로고침</button><button class="p" onclick="openAddAccount()">+ 계정 추가</button></div>
+    <div id="addAccBox" class="hide" style="margin-top:12px;padding:12px;border:1px dashed #3b6ef5;border-radius:10px">
+      <div class="me" style="margin-bottom:6px">새 계정 로그인 — LOCO 세션은 안 열고 oauth 토큰만 획득</div>
+      <label>아이디</label><input id="aa_email" autocomplete="username" placeholder="example@kakao.com">
+      <label>비밀번호</label><input id="aa_pw" type="password">
+      <label>기기 유형</label><select id="aa_dt"><option value="tablet">tablet</option><option value="pc">pc</option></select>
+      <div class="row"><button class="p" onclick="doAddAccount()">로그인</button><button onclick="closeAddAccount()">취소</button></div>
+      <div id="aa_passBox" class="hide" style="margin-top:8px">
+        <pre id="aa_codeBox" class="hide"></pre>
+        <label>인증번호</label><input id="aa_code" inputmode="numeric">
+        <div class="row"><button class="p" onclick="doAddAccountPasscode()">확인</button></div>
+      </div>
+      <pre id="aa_out" class="hide"></pre>
+    </div>
+  </div>
+
   <h2>방 찾기</h2>
   <div class="row"><button onclick="loadRooms()">방 목록 불러오기</button></div>
   <input id="roomFilter" class="search hide" placeholder="방 이름·멤버 이름 검색 (실시간)" oninput="filterRooms()">
@@ -156,8 +176,14 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <input type="checkbox" id="ocBatch" style="width:auto;margin:0">
     <span>같은 저자의 다른 메시지도 함께 신고 — 카카오 공식 한도 5개(주1+추가4)까지만 자동</span>
   </label>
-  <div class="row"><button class="p" onclick="ocOne()">선택 카테고리 집중 발사</button></div>
-  <div class="row"><button onclick="uVerdict()">u 판정 — 작성자(a)/대상(b)/없는번호(c) 3연발</button></div>
+  <div class="row">
+    <button class="p" onclick="ocOne()">선택 카테고리 집중 발사 (primary 1개)</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button class="p" onclick="ocFanout()" style="background:#c0392b">🔥 fanout 발사 (활성 계정 전부)</button>
+  </div>
+  <div class="me" style="margin-top:6px">fanout: 위 "계정 풀" 에서 체크된 계정들로 동시 발사 — N 명이 신고한 것처럼 보임 → 서버 집계 임계치 돌파에 결정적</div>
+  <div class="row" style="margin-top:8px"><button onclick="uVerdict()">u 판정 — 작성자(a)/대상(b)/없는번호(c) 3연발</button></div>
 
   <h2>raw LOCO (운영자 전용)</h2>
   <label>method</label>
@@ -251,6 +277,7 @@ async function refreshMe() {
     const loco = j.loco === 'O' ? '🟢' : '🔴' + (j.locoError ? ' ' + j.locoError : '')
     const db = j.dbBackend === 'pg' ? '🐘 Neon' : '💾 file'
     $('me').textContent = '로그인됨 · ' + j.email + ' · uid ' + j.userId + ' · LOCO ' + loco + ' · ' + db
+    refreshAccounts()  // 계정 풀 자동 로드
   } catch (e) { $('me').textContent = '상태 조회 실패: ' + e.message }
 }
 async function locoReconnect() {
@@ -525,6 +552,99 @@ function ctxWithInject() {
   }
   return ctx
 }
+// ─── 계정 풀 관리 ───
+window.__accounts = []
+async function refreshAccounts() {
+  const box = $('accList'); box.innerHTML = '<div class="item">로딩…</div>'
+  try {
+    const r = await fetch('/report/accounts/list' + q())
+    const j = await r.json()
+    if (!j.ok) { box.innerHTML = '<div class="item">실패: ' + esc(j.error || JSON.stringify(j)) + '</div>'; return }
+    window.__accounts = Array.isArray(j.accounts) ? j.accounts : []
+    renderAccounts()
+  } catch (e) { box.innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
+}
+function renderAccounts() {
+  const box = $('accList'); const list = window.__accounts || []
+  if (!list.length) { box.innerHTML = '<div class="item">계정 없음 — "+ 계정 추가" 로 시작</div>'; return }
+  box.innerHTML = list.map((a) => {
+    const prim = a.isPrimary ? ' · <span class="chip">primary</span>' : ''
+    const dot = a.active ? '🟢' : '🔴'
+    const last = a.lastStatus ? ' · <span class="me" style="font-weight:normal">마지막: ' + esc(a.lastStatus) + '</span>' : ''
+    return '<div class="item" data-uid="' + a.userId + '">' +
+      '<div class="t">' + dot + ' ' + esc(a.email || '(이메일 없음)') + prim + '</div>' +
+      '<div class="s">uid ' + a.userId + last + '</div>' +
+      '<div style="margin-top:6px">' +
+        '<button class="subBtn acc-toggle" data-uid="' + a.userId + '" data-next="' + (!a.active) + '">' + (a.active ? '비활성화' : '활성화') + '</button>' +
+        (a.isPrimary ? '' : ' <button class="subBtn acc-remove" data-uid="' + a.userId + '" style="background:#5c1a1a;color:#fcc">삭제</button>') +
+      '</div>' +
+    '</div>'
+  }).join('')
+  Array.from(box.querySelectorAll('.acc-toggle')).forEach((el) => {
+    el.addEventListener('click', async (ev) => {
+      ev.stopPropagation()
+      const uid = el.dataset.uid; const nx = el.dataset.next === 'true'
+      await post('/report/accounts/toggle', { userId: uid, active: nx })
+      await refreshAccounts()
+    })
+  })
+  Array.from(box.querySelectorAll('.acc-remove')).forEach((el) => {
+    el.addEventListener('click', async (ev) => {
+      ev.stopPropagation()
+      if (!confirm('이 계정을 풀에서 삭제? (primary 가 아닌 계정만 삭제됨)')) return
+      const uid = el.dataset.uid
+      await post('/report/accounts/remove', { userId: uid })
+      await refreshAccounts()
+    })
+  })
+}
+function openAddAccount() { $('addAccBox').classList.remove('hide') }
+function closeAddAccount() { $('addAccBox').classList.add('hide'); $('aa_out').classList.add('hide'); $('aa_passBox').classList.add('hide') }
+async function doAddAccount() {
+  const out = $('aa_out'); out.classList.remove('hide'); out.textContent = '로그인 중…'
+  const email = $('aa_email').value.trim(), pw = $('aa_pw').value
+  if (!email || !pw) { out.textContent = '아이디·비번 필요'; return }
+  try {
+    const j = await post('/report/accounts/add', { email, password: pw, deviceType: $('aa_dt').value })
+    out.textContent = j.message || (j.ok ? '성공' : '실패')
+    if (j.ok) {
+      $('aa_email').value = ''; $('aa_pw').value = ''; $('aa_passBox').classList.add('hide')
+      await refreshAccounts()
+      setTimeout(() => closeAddAccount(), 1500)
+      return
+    }
+    if (j.needPasscode) {
+      $('aa_passBox').classList.remove('hide')
+      if (j.showCode) { $('aa_codeBox').classList.remove('hide'); $('aa_codeBox').textContent = '폰에 입력할 인증번호\n→ ' + j.showCode }
+    }
+  } catch (e) { out.textContent = '실패: ' + e.message }
+}
+async function doAddAccountPasscode() {
+  const out = $('aa_out'); out.classList.remove('hide'); out.textContent = '확인 중…'
+  try {
+    const j = await post('/report/accounts/add-passcode', { code: $('aa_code').value.trim() })
+    out.textContent = j.message || (j.ok ? '성공' : '실패')
+    if (j.ok) { await refreshAccounts(); setTimeout(() => closeAddAccount(), 1500) }
+  } catch (e) { out.textContent = '실패: ' + e.message }
+}
+
+async function ocFanout() {
+  save()
+  if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
+  const category = ($('ocCat').value || 'VIOLENT').trim().toUpperCase()
+  const ctx = ctxWithInject()
+  const extraCount = Array.isArray(ctx.extraLogs) ? ctx.extraLogs.length : 0
+  const active = (window.__accounts || []).filter((a) => a.active)
+  if (!active.length) { $('out').textContent = '활성 계정 없음 — 계정 풀에서 추가하거나 활성화하세요'; return }
+  const userIds = active.map((a) => a.userId)
+  $('out').textContent = '🔥 fanout 발사 중… ' + active.length + ' 계정 · ' + category + ' · 메시지 ' + (1 + extraCount) + '개'
+  try {
+    const j = await post('/report/openchat-fanout', { ctx, category, userIds })
+    $('out').textContent = (j.text || '') + '\n\n' + JSON.stringify(j, null, 1)
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
+  await refreshAccounts()  // last_used/last_status 갱신
+}
+
 async function ocOne() {
   save()
   if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }

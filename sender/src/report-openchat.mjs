@@ -9,6 +9,7 @@
 //                  배열 안 각 원소 = { u, m:{message,referer,revision}, s, t, l, scope, threadId? }
 //                  (Lyud1;->f + Lyud1;->j 가 조립)
 import { get as getCred } from './report-auth.mjs'
+import * as DB from './report-db.mjs'
 
 export const HOST = 'https://open.kakao.com'
 export const PATH = '/c/fraud/report/chatLogs'
@@ -31,9 +32,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 //   - C 헤더 제거                     (추측 헤더 — 서버가 거부했을 가능성)
 //   - Accept-Language 제거             (추측 헤더 — 서버가 거부했을 가능성)
 // User-Agent / A / Content-Type / Accept 는 성공 로그와 동일한 셋이라 유지.
-function authHeader() {
-  const c = getCred()
-  if (!c || !c.oauthToken) throw new Error('로그인 안 됨')
+// cred 가 명시되면 그걸, 없으면 primary(getCred()) 사용 — 다계정 fanout 지원.
+function authHeader(credOverride) {
+  const c = credOverride || getCred()
+  if (!c || !c.oauthToken || !c.duuid) throw new Error('로그인 안 됨 (cred 없음)')
   return {
     'authorization': c.oauthToken + '-' + c.duuid,
     'content-type': 'application/json',
@@ -130,7 +132,7 @@ export function buildBody(ctx, category) {
 }
 
 // extra 메시지 묶음은 바디가 커져 4초는 빡빡함. 신고가 느려도 abort 로 날아가지 않게 8초.
-async function hit(body, { timeoutMs = 8000, host = HOST } = {}) {
+async function hit(body, { timeoutMs = 8000, host = HOST, cred } = {}) {
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), timeoutMs)
   // body 가 { _raw: "..." } 이면 raw JSON 문자열을 그대로, 아니면 stringify
@@ -138,7 +140,7 @@ async function hit(body, { timeoutMs = 8000, host = HOST } = {}) {
   try {
     const r = await fetch(host + PATH, {
       method: 'POST',
-      headers: authHeader(),
+      headers: authHeader(cred),
       body: payload,
       signal: ctrl.signal,
     })
@@ -163,14 +165,12 @@ async function hit(body, { timeoutMs = 8000, host = HOST } = {}) {
   }
 }
 
-// 한 카테고리로 한 번 쏘기
-export async function reportOne(ctx, category) {
+// 한 카테고리로 한 번 쏘기 — opts.cred 가 주어지면 그 계정으로, 아니면 primary.
+export async function reportOne(ctx, category, opts = {}) {
   if (!ctx || !ctx.chatId || !ctx.logId || !ctx.authorId) return { ok: false, text: 'chatId · logId · authorId 필요' }
-  // linkId 누락 시 longStr('') → '0' 으로 송출됨. 오픈채팅 신고는 반드시 linkId 필요 — raw 호출
-  // (UI 가 pickRoom 안 거침) 에서 빠질 수 있음.
   if (!ctx.linkId) return { ok: false, text: 'linkId 필요 (방을 pickRoom 으로 선택해야 자동 채워짐)' }
   const body = buildBody(ctx, category)
-  const r = await hit(body)
+  const r = await hit(body, { cred: opts.cred })
   const ok = r.httpCode === 200 && r.status === 0
   return {
     ok, category, sent: r.sent, http: r.httpCode, status: r.status, respBody: r.body, respHeaders: r.headers, text: r.text,
@@ -207,6 +207,51 @@ export async function probeShapes(host, ctx) {
   const r = await reportOne(ctx, 'SPAM')
   return { ok: r.ok, rows: [r.msg], text: r.msg + '\n(바디 모양은 APK 기준 확정 — 이 결과는 "경로 작동 여부" 확인)' }
 }
+// ─── 다계정 fanout ───
+// userIds: 비어있으면 활성 계정 **전부** 사용. 각 계정에서 reportOne 1회씩.
+// gapMs: 계정 간 간격 (서버 레이트 리밋 회피). 기본 500ms.
+// 결과: [{userId, email, http, status, ok, msg, err?}]. 모든 결과 리턴 후 각 계정 last_used/last_status 업데이트.
+export async function fanout(ctx, category, userIds, { gapMs = 500 } = {}) {
+  if (!ctx || !ctx.chatId || !ctx.logId || !ctx.authorId || !ctx.linkId) {
+    return { ok: false, text: 'chatId · logId · authorId · linkId 필요' }
+  }
+  const all = await DB.listAccounts()
+  const active = all.filter((a) => a.active !== false && a.oauthToken && a.duuid)
+  const list = userIds && userIds.length
+    ? active.filter((a) => userIds.map(String).includes(String(a.userId)))
+    : active
+  if (!list.length) return { ok: false, text: '발사 가능한 활성 계정이 없음' }
+
+  const rows = []
+  let accepted = 0
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i]
+    const r = await reportOne(ctx, category, { cred: a }).catch((e) => ({
+      ok: false, http: 0, status: null, err: String(e && e.message ? e.message : e),
+    }))
+    const status = r.status != null ? r.status : (r.err ? 'err' : '-')
+    try { await DB.markAccountUsed(a.userId, 'http=' + r.http + ' status=' + status) } catch (e) {}
+    rows.push({
+      userId: a.userId,
+      email: String(a.email || '').replace(/^(.).*(@.*)$/, '$1***$2'),
+      ok: !!r.ok,
+      http: r.http,
+      status: r.status,
+      err: r.err || null,
+      msg: (r.ok ? '★' : '·') + ' ' + a.userId + ' http=' + r.http + ' status=' + status,
+    })
+    if (r.ok) accepted++
+    if (i + 1 < list.length) await sleep(gapMs)
+  }
+  return {
+    ok: accepted > 0,
+    accepted,
+    total: list.length,
+    rows,
+    text: 'fanout 접수 ' + accepted + '/' + list.length + '\n' + rows.map((x) => x.msg).join('\n'),
+  }
+}
+
 export async function fire(host, ctx, reasons) {
   // reasons 는 sr 번호. CATEGORIES 로 매핑 (0=SEXUAL, 4=SPAM 등).
   const cats = Array.isArray(reasons) && reasons.length
