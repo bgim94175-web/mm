@@ -4,6 +4,56 @@
 
 ---
 
+## 8차 — 결함 소탕 (v59-A, 2026-11-15)
+
+APK 26.8.3 정적 분석 문서(SHA-256 FE807EE8-7615-40EF-A7B0-56D5DCE5E1BA)와 라이브 72건 접수 조건을 교차 검증해 "프로브 착수 전에 앱과 바이트 구분이 안 되게" 코드 결함 전량 수정. 프로브(P1~P4)는 다음 태스크, 여기서는 수정 + 스모크 1발까지.
+
+**D1~D14 수정 목록** (커밋 각 D번호로 추적):
+
+| D | 변경 | 근거 §번호 |
+|---|---|---|
+| D0 | report-browse.mjs::extractItem() 공통화. scope/threadId/attachmentJson 신규, referer/revision 을 null 가능으로 (0 fallback 제거) | §4 yud1.f/j |
+| D1 | logItem 재작성. m 4키 조건부(message/attachment/referer/revision), 순서 고정, 0 유효값 보존 | §4 yud1.j |
+| D2 | strictInt / strictLong / trunc500 / assertShape 유틸 신설. 조용한 '0' 치환 제거 | §4 assertShape 스펙 |
+| D3 | buildChatLogInfosString 에서 items.reverse() — 앱은 역순 송신 | §5 yud1.e |
+| D4 | clampSendAt 30일/5분 컷 제거. s<=0 만 now 치환 | §4 s=chatLog.c() |
+| D5 | type strictInt — 0 도 유효값으로 통과, 'x' 는 throw | §4 t=s1() |
+| D6 | scope 하드코딩 "1" 제거 — lg.scope ?? ctx.scope, 둘 다 없으면 throw | §4 scope=k1() |
+| D7 | authHeader(cred, {authStyle}) 'plain'/'duuid' 분기. **기본 'plain'** (§12 APK) 이지만 어느 쪽도 삭제 금지. env REPORT_AUTH_STYLE=duuid 로 즉시 전환 가능 | §12 vs docs rp-v44 |
+| D8 | inject text extras 더 이상 ctx.injectText 로 안 덮임. 각 아이템이 자기 injectText. 5개 batch 에 5개 다른 조작문 가능 | §3 D8 |
+| D9 | ctxWithInject 이웃 선택을 시간 인접 [i±r] 로. 이전 .slice(0,4) 는 최신만 잡던 버그 | §3 D9 |
+| D10 | categoryGuard (server+UI). RIGHT/YOUTH_UNSUITABLE 항상 거부, ILLEGAL_FILMING GROUP 계열만. 드롭다운 9개로 재정렬, 기본 ILLEGAL, "코드N" 병기 (HTTP 매핑은 추론) | §7 매트릭스, §6 sr |
+| D11 | ocFireAll 버튼 신규. 서버 fireAll + UI 가 skip 사유 사전 안내 | §3 D11 |
+| D12 | fanoutLink.blockFail 을 accepted 기준으로 통일 (fanout 과 동일) — 접수 실패 계정이 block 실패로 세지던 버그 | §3 D12 |
+| D13 | probeHosts / probeShapes 삭제, fire(host, …) 의 host 인자 제거. 탐색 아닌 dead route | §8 단일 호스트, §9 단일 shape |
+| D14 | dumpRequest 가 assertShape 실패를 { ok:false, stage:'assertShape', error } 로 surface | §4 |
+
+**assertShape 커버리지**: reportOne / fire / fireAll / fanout / dumpRequest 는 buildChatLogInfosString 통해 자동 적용. reportLink / fanoutLink 는 /link 바디가 다르므로 strictLong(linkId) + CATEGORIES 멤버십으로 가드.
+
+### 헤더 A/B — 미결
+
+문서 두 개가 서로 반대말을 한다:
+
+| 소스 | Authorization | 상태 |
+|---|---|---|
+| §12 APK 정적 분석 (c4c0.i()) | oauthToken (접미사 없음) | v59-A D7 기본값 |
+| 이 문서 rp-v44 (2026-11-15 재분석) | oauthToken + '-' + duuid | 라이브 72건 접수한 조건 |
+
+v59-A D7 커밋은 **둘 다 보존**하고 `authHeader(cred, {authStyle})` 와 env `REPORT_AUTH_STYLE` 로 분기. **어느 쪽도 지우지 않았다.** P1 프로브(다음 태스크)가 두 스타일 각 1회씩 쏴서 어느 쪽이 접수되는지 확정한 뒤 기본값 재조정.
+
+### 스모크 1발 (D17) — 다음 메시지에서 결과 보고
+
+- primary 계정 1개 · 원문 · ILLEGAL · 배치 OFF · 단발
+- 성공 조건: http=200 && body.status >= 0
+- 실패 시 덤프로 D1~D14 중 어느 수정이 바이트를 깨뜨렸는지 역추적
+- 사용한 logId 를 기록 (P1 프로브에서 재사용 금지)
+
+### SW 캐시
+
+rp-v64 → rp-v65 (D16).
+
+---
+
 ## 1. 지금까지 확정된 사실
 
 | 사실 | 근거 |
