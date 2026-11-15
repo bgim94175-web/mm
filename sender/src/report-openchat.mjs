@@ -234,6 +234,9 @@ export function buildChatLogInfosString(ctx) {
   }
   // v59-A §4 — assertShape 전량. 하나라도 실패하면 throw (buildBody caller 가 catch).
   for (const o of items) assertShape(o)
+  // v59-A D3 — §5 yud1.e 역순 재조립. 앱은 마지막 index 부터 0 까지 새 JSONArray 로 복사.
+  // 봇은 지금까지 primary 를 0 번에 두고 extra 가 뒤따랐는데 앱은 그 반대 순서로 보낸다.
+  items.reverse()
   // u/l 은 JSON number 로, threadId 도 number 가 자연스럽지만 Long 이라 JS 정수 안전범위를
   // 넘을 수 있다. 각 값이 strictLong 통과한 숫자 문자열이므로 raw JSON 조립으로 처리.
   const encoded = items.map(encodeItem)
