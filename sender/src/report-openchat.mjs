@@ -37,6 +37,31 @@ const CATEGORY_UPPER = {
   right_infringement: 'RIGHT', protect_child: 'PROTECTCHILD',
   illegal_filming: 'ILLEGAL_FILMING', youth_unsuitable: 'YOUTH_UNSUITABLE',
 }
+
+// ★ v59-A D10 — 사유 노출 매트릭스 §7 가드.
+//   RIGHT, YOUTH_UNSUITABLE: OLKCHATROOM 목록에 없음 → 항상 거부.
+//   ILLEGAL_FILMING: OLKCHATROOM_GROUP 에만 있음 (DIRECT 비활성).
+//   roomType 미상 시 ILLEGAL_FILMING 만 거부, 나머지 통과.
+// chatTypeName 기준 GROUP 계열: 2(Group), 3(OpenGroup), 32/33/34(OpenMulti).
+export function isGroupRoomType(t) {
+  const n = Number(t)
+  return n === 2 || n === 3 || n === 32 || n === 33 || n === 34
+}
+export function categoryGuard(roomType, category) {
+  const cat = String(category || '').toUpperCase()
+  if (cat === 'RIGHT' || cat === 'YOUTH_UNSUITABLE') {
+    return { ok: false, category: cat, reason: '사유 노출 매트릭스 §7: OLK 신고 화면에 없음' }
+  }
+  if (cat === 'ILLEGAL_FILMING') {
+    if (roomType == null) {
+      return { ok: false, category: cat, reason: 'roomType 미상 — ILLEGAL_FILMING 은 GROUP 계열 방만' }
+    }
+    if (!isGroupRoomType(roomType)) {
+      return { ok: false, category: cat, reason: 'ILLEGAL_FILMING 은 GROUP 계열 방만 (현재 type=' + roomType + ')' }
+    }
+  }
+  return { ok: true, category: cat }
+}
 function normalizeCategory(c) {
   const s = String(c || '').trim()
   let wire = s
@@ -371,6 +396,9 @@ async function hit(body, { timeoutMs = 8000, host = HOST, path = PATH, cred, ret
 export async function reportOne(ctx, category, opts = {}) {
   if (!ctx || !ctx.chatId || !ctx.logId || !ctx.authorId) return { ok: false, text: 'chatId · logId · authorId 필요' }
   if (!ctx.linkId) return { ok: false, text: 'linkId 필요 (방을 pickRoom 으로 선택해야 자동 채워짐)' }
+  // ★ v59-A D10 — 서버측 categoryGuard. UI 가드 뚫고 들어온 요청도 여기서 차단.
+  const g = categoryGuard(ctx.roomType, category)
+  if (!g.ok) return { ok: false, category: g.category, text: '가드 거부: ' + g.reason }
   // 디버그 override — opts.adidMode / opts.categoryUpper 로 환경변수 일시 오버라이드
   const saveAdid = process.env.REPORT_ADID_MODE
   const saveCat = process.env.REPORT_CATEGORY_CASE
@@ -612,13 +640,26 @@ export async function fireAll(ctx) {
   const BATCH = 3
   for (let i = 0; i < ordered.length; i += BATCH) {
     const chunk = ordered.slice(i, i + BATCH)
-    const rs = await Promise.all(chunk.map((cat) => reportOne(ctx, cat)))
+    // ★ v59-A D10/D11 — 가드 위반 사유는 발사 전에 skip 처리. 결과에 'skip(가드)' 로 표기.
+    const rs = await Promise.all(chunk.map(async (cat) => {
+      const g = categoryGuard(ctx.roomType, cat)
+      if (!g.ok) return { category: cat, ok: false, skipped: true, reason: g.reason }
+      return reportOne(ctx, cat)
+    }))
     rs.forEach((r) => { results.push(r); console.log('openchat fireAll ' + JSON.stringify(r)) })
     if (i + BATCH < ordered.length) await sleep(GAP)
   }
-  const rows = results.map((r) => r.category + ' → http=' + r.http + (r.status != null ? '/s=' + r.status : '') + (r.text ? ' "' + String(r.text).slice(0, 80) + '"' : ''))
+  const rows = results.map((r) => r.skipped
+    ? r.category + ' → skip(가드) ' + (r.reason || '')
+    : r.category + ' → http=' + r.http + (r.status != null ? '/s=' + r.status : '') + (r.text ? ' "' + String(r.text).slice(0, 80) + '"' : ''))
   const acceptedCats = results.filter((r) => r.ok).map((r) => r.category)
-  return { ok: acceptedCats.length > 0, accepted: acceptedCats.length, acceptedCats, rows, text: '접수 ' + acceptedCats.length + '/' + ordered.length + ' [' + acceptedCats.join(',') + ']\n' + rows.join('\n') }
+  const skipped = results.filter((r) => r.skipped).length
+  return {
+    ok: acceptedCats.length > 0,
+    accepted: acceptedCats.length, acceptedCats, skipped,
+    rows,
+    text: '접수 ' + acceptedCats.length + '/' + (ordered.length - skipped) + ' (가드 skip ' + skipped + ') [' + acceptedCats.join(',') + ']\n' + rows.join('\n'),
+  }
 }
 
 // v59-A D13 — probeHosts / probeShapes 는 reportOne 을 한 번 부를 뿐 탐색이 전혀 없었다.

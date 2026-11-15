@@ -173,21 +173,18 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   <h2>오픈채팅 HTTP 신고 (open.kakao.com/c/fraud/report/chatLogs)</h2>
   <label>카테고리 — APK 26.8.3 strings.xml 기준 1:1 매핑. 한 개 집중 (분산은 서버가 dedupe).</label>
   <select id="ocCat">
-    <option value="VIOLENT">VIOLENT — ★ 욕설·증오발언·폭력·혐오 (= 이용제한 통지 바로 그 분류)</option>
-    <option value="SEXUAL">SEXUAL — 음란·성적 행위</option>
-    <option value="SPAM">SPAM — 불법 스팸·서비스 운영방해 (광고·도배)</option>
-    <option value="FRAUD">FRAUD — 사기·사칭</option>
-    <option value="ILLEGAL">ILLEGAL — 불법 상품·서비스</option>
-    <option value="PRIVACY">PRIVACY — 개인정보 무단 수집·유포</option>
-    <option value="RIGHT">RIGHT — 권리침해 (명예훼손·저작권)</option>
-    <option value="PROTECTCHILD">PROTECTCHILD — 아동·청소년 보호 (법규 zero-tolerance)</option>
-    <option value="ILLEGAL_FILMING">ILLEGAL_FILMING — 불법촬영물·딥페이크 (법규 zero-tolerance)</option>
-    <option value="SUICIDE">SUICIDE — 자살·자해</option>
-    <option value="YOUTH_UNSUITABLE">YOUTH_UNSUITABLE — 청소년 유해</option>
-    <option value="ETC">ETC — 어뷰징 (가짜계정·계정거래)</option>
+    <option value="ILLEGAL">ILLEGAL — 불법 상품·서비스 (코드5)</option>
+    <option value="SPAM">SPAM — 불법 스팸·광고·도배 (코드1)</option>
+    <option value="SEXUAL">SEXUAL — 음란·성적 행위 (코드2)</option>
+    <option value="FRAUD">FRAUD — 사기·사칭 (코드3)</option>
+    <option value="PROTECTCHILD">PROTECTCHILD — 아동·청소년 (코드4)</option>
+    <option value="VIOLENT">VIOLENT — 욕설·증오·폭력·혐오 (코드0)</option>
+    <option value="PRIVACY">PRIVACY — 개인정보 (코드0)</option>
+    <option value="ETC">ETC — 어뷰징/가짜계정 (코드0)</option>
+    <option value="SUICIDE">SUICIDE — 자살·자해 (코드0)</option>
   </select>
   <div style="margin-top:4px;padding:6px 10px;border:1px solid #27ae60;border-radius:8px;background:#0a2a1a;color:#9ec;font-size:11px">
-    ✅ <b>라이브 4-mode matrix 확정 (2026-11-15)</b>: category 는 <b>대문자 enum</b> 이 정답. 8차 Fork 의 "소문자 snake_case" 결론 오류. UPPER + ADID 조합이 status=0 접수. 소문자는 status=-500.
+    ✅ <b>v59-A D10</b> — OLKCHATROOM §7 노출 매트릭스 기준 9개. <b>RIGHT · YOUTH_UNSUITABLE</b> 는 어느 OLK 화면에도 없어 서버/UI 양쪽에서 거부, <b>ILLEGAL_FILMING</b> 은 GROUP 계열 방에서만 허용. 괄호 안 "코드N" 은 BLSPAMS 정수 매핑(§6): HTTP 백엔드에도 그대로 적용되는지는 <b>추론</b>.
   </div>
   <label>연속 발사 횟수 (한 계정 N회 — 서버 dedupe 유무 확인용)</label>
   <input id="ocRepeat" inputmode="numeric" value="1" placeholder="기본 1회">
@@ -426,7 +423,26 @@ async function go(what) {
 }
 function esc(s) { return String(s || '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) }
 let pickedCtx = null
-let pickedRoom = null          // {chatId, linkId, label}
+let pickedRoom = null          // {chatId, linkId, type, typeName, label}
+
+// ★ v59-A D10 — UI 가드. 서버 report-openchat.mjs::categoryGuard 와 동일한 룰.
+//   RIGHT · YOUTH_UNSUITABLE: §7 OLKCHATROOM 에 없음 → 항상 거부
+//   ILLEGAL_FILMING: GROUP 계열(2/3/32/33/34) 방만 허용. roomType 미상이면 거부.
+function isGroupRoomType(t) {
+  const n = Number(t)
+  return n === 2 || n === 3 || n === 32 || n === 33 || n === 34
+}
+function uiCategoryGuard(roomType, cat) {
+  const c = String(cat || '').toUpperCase()
+  if (c === 'RIGHT' || c === 'YOUTH_UNSUITABLE') {
+    return { ok: false, reason: '§7 OLK 화면에 없는 사유 (서버/UI 양쪽 거부)' }
+  }
+  if (c === 'ILLEGAL_FILMING') {
+    if (roomType == null) return { ok: false, reason: 'roomType 미상 — ILLEGAL_FILMING 은 GROUP 계열 방만' }
+    if (!isGroupRoomType(roomType)) return { ok: false, reason: 'ILLEGAL_FILMING 은 GROUP 계열 방만 (현재 type=' + roomType + ')' }
+  }
+  return { ok: true }
+}
 let onlyAuthor = null          // 저자 필터 — authorId 문자열 or null
 window.__rooms = []
 window.__msgs = []
@@ -521,8 +537,14 @@ async function lookupRoom() {
 
 async function pickRoom(chatId, linkId) {
   const rm = (window.__rooms || []).find((r) => r.chatId === chatId)
-  pickedRoom = { chatId, linkId, label: rm ? (rm.typeName + ' · ' + (rm.members || '(이름없음)')) : chatId }
-  pickedCtx = { chatId, linkId }
+  // v59-A D10 — type 보존해서 categoryGuard 가 GROUP/DIRECT 를 구분할 수 있게.
+  pickedRoom = {
+    chatId, linkId,
+    type: rm && rm.type != null ? Number(rm.type) : null,
+    typeName: rm ? rm.typeName : null,
+    label: rm ? (rm.typeName + ' · ' + (rm.members || '(이름없음)')) : chatId,
+  }
+  pickedCtx = { chatId, linkId, roomType: pickedRoom.type }
   onlyAuthor = null
   $('c').value = chatId
   if (linkId && $('plinkId')) $('plinkId').value = linkId   // 프로필 신고 linkId 자동 세팅
@@ -686,7 +708,9 @@ function ctxWithInject() {
   const injectEnabled = !!($('ocEnableInject') && $('ocEnableInject').checked)
   const inject = ($('txt').value || '').trim()
   const injectAll = injectEnabled && $('ocInjectAll') && $('ocInjectAll').checked && inject
-  const ctx = Object.assign({}, pickedCtx, (injectEnabled && inject) ? { injectText: inject, enableInject: true } : {})
+  // v59-A D10 — roomType 을 ctx 에 포함해서 서버 categoryGuard 가 GROUP/DIRECT 분기 가능.
+  const roomType = pickedRoom && pickedRoom.type != null ? pickedRoom.type : (pickedCtx && pickedCtx.roomType != null ? pickedCtx.roomType : null)
+  const ctx = Object.assign({}, pickedCtx, { roomType }, (injectEnabled && inject) ? { injectText: inject, enableInject: true } : {})
   if ($('ocBatch') && $('ocBatch').checked && window.__msgs && pickedCtx && pickedCtx.authorId) {
     const msgs = window.__msgs
     const i = msgs.findIndex((m) => String(m.logId) === String(pickedCtx.logId))
