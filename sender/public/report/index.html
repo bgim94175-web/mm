@@ -188,13 +188,15 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   </select>
   <label>연속 발사 횟수 (한 계정 N회 — 서버 dedupe 유무 확인용)</label>
   <input id="ocRepeat" inputmode="numeric" value="1" placeholder="기본 1회">
-  <label style="display:flex;align-items:center;gap:8px;margin:12px 0 4px;color:#eee">
-    <input type="checkbox" id="ocBatch" style="width:auto;margin:0">
-    <span>같은 저자의 다른 메시지도 함께 신고 — 카카오 공식 한도 5개(주1+추가4)까지만 자동</span>
+  <label style="display:flex;align-items:center;gap:8px;margin:12px 0 4px;color:#9cf">
+    <input type="checkbox" id="ocBatch" style="width:auto;margin:0" checked>
+    <span><b>★ 같은 저자의 다른 메시지도 함께 신고 (임계 돌파 핵심)</b> — 공식 한도 5개(주1+추가4). "반복 유해" 가중 신호. 기본 ON.</span>
   </label>
   <div style="margin-top:10px;padding:10px;border:1px solid #c0392b;border-radius:10px;background:#2a1414;color:#fca;font-size:12px">
-    ⚠ <b>제재 안 걸리면 — 99% fanout 미사용이 원인</b>. APK 2차 분석(2026-11-15) 결과 신고 코드는 바이트 레벨로 정확.
-    서버는 silent-accept 후 심사 큐에 넣고 임계 넘어야 처분. <b>단일 계정 1회 신고로는 거의 안 걸림</b>. 아래 🔥 fanout 을 메인으로.
+    ⚠ <b>제재 임계 돌파 — 두 축</b>:<br>
+    (1) <b>다계정 fanout</b> — 활성 계정 전부로 같은 chatLog 신고. N명 신고가 심사 큐 임계 올림.<br>
+    (2) <b>같은 저자 메시지 묶음</b> — 아래 "같은 저자의 다른 메시지도 함께 신고" 체크. 1 요청에 최대 5개 (primary 1 + extra 4). "반복 유해" 가중 신호.<br>
+    ❌ KICKMEM 은 호스트 봇만 서버 수락 — 일반 멤버는 -500. 임계에 기여 0 (7차 APK 확인).
   </div>
   <div style="margin-top:12px;padding:10px;border:1px solid #333;border-radius:10px;background:#141414">
     <div class="me" style="margin-bottom:6px">⏱ 쓰로틀 — 서버 쪽 봇 감지 회피. 계정 간 간격 조절</div>
@@ -206,9 +208,9 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     </div>
     <label style="display:flex;align-items:center;gap:8px;margin-top:8px"><input type="checkbox" id="ocFanoutShuffle" checked style="width:auto;margin:0"><span>fanout 때 계정 순서 섞기 (봇 패턴 회피)</span></label>
   </div>
-  <label style="display:flex;align-items:center;gap:8px;margin-top:10px;color:#fca;font-size:13px">
-    <input type="checkbox" id="ocPostBlock" style="width:auto;margin:0" checked>
-    <span><b>🚫 완료 후 "차단" 추가</b> (primary LOCO 로 KICKMEM r=true 1회) — APK "차단하고 신고하기" 재현. <b>이게 제재 임계 돌파 핵심</b>으로 추정</span>
+  <label style="display:flex;align-items:center;gap:8px;margin-top:10px;color:#888;font-size:13px">
+    <input type="checkbox" id="ocPostBlock" style="width:auto;margin:0">
+    <span><b>🚫 완료 후 KICKMEM 호출</b> — <b>호스트/부방장 봇 계정 전용</b>. 일반 멤버는 서버가 <code>body.status=-500</code> 거부 (APK 7차 확인). 앱도 똑같이 -500 받지만 UI 는 "차단 완료"로 표시만 — 서버 임계엔 안 쌓임</span>
   </label>
   <div class="row" style="margin-top:12px">
     <button class="p" onclick="ocFanout()" style="background:#c0392b;font-size:16px;padding:16px">🔥 fanout 발사 (활성 계정 전부) — 추천</button>

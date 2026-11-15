@@ -97,6 +97,47 @@ yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), r
   b) 계정별 간격·지터 충분해서 어뷰징 필터 안 걸리게
   c) 메시지 원문 보존 (injectText 는 opt-in, 이미 rp-v44 에서 처리)
 
+### ★★★ 2026-11-15 7차 확정 — KICKMEM 은 호스트 전용, 일반 멤버 봇에겐 서버 레벨 효과 0 ★★★
+
+**봇 라이브 결과로 4차·6차 가정 깨짐**:
+- 봇 fanout 2계정 → `+32981 (primary, 일반 멤버)` chatLogs OK + KICKMEM `body.status=-500`
+- `+22992` 는 서버 격리 상태라 chatLogs 자체 -203
+
+**7차 콜그래프 재추적**:
+- `fzc0$d.h` / `fzc0$d.e` / `$p.invokeSuspend` 전부 **분기 없음** → 일반 멤버도 KICKMEM 호출은 함
+- `sc$b$a.invokeSuspend` 안에 **`ll9.J1(friendId):Z` 선행 체크** — false 면 `AbuseReportDoNothingException` throw (서버 호출 생략)
+- 봇은 J1 통과 후 KICKMEM 날아간 뒤 **서버가 호스트 아님으로 -500 거부**
+- 즉 클라 분기 아님 — **서버 레벨에서 reporter 가 호스트/부방장 아니면 KICKMEM 거부**
+- 앱도 마찬가지로 -500 받지만 UI 를 "차단 완료" 로 표시만 함 → **서버 집계 신호엔 0**
+
+**LOCO block/blind 메서드 (Lqx50 enum dump)**:
+- `KICKMEM` (tw30 Job) — 멤버 퇴출, 호스트 권한. payload `{li, c, mid, r}`
+- `BLIND` (r94 Job) — 메시지 블라인드. payload 6필드 `{li, c, mid, cli, cat, r}` (cli/cat 는 reason/text String). **호스트 권한 유력** — 대안 아님
+
+**AbuseReportAfterAction 서브클래스 실제 LOCO (5가지)**:
+- `TimeChatLog` = `/c/fraud/report/chatLogs` POST (LOCO 아님)
+- `Block` = `KICKMEM` (호스트 전용)
+- `Blind` = `BLIND` (호스트 유력)
+- `Leave` = `Lbly$d.d` (openlink 나가기 LOCO, 메서드명 미확정)
+- `Rewrite` = `Lbly$d.c` (타임라인 재작성, 미확정)
+
+**"차단하고 신고" afterAction**: `w30$h → w30.J6 → i40.i4(d40)` — **afterAction=Block 확정**. 오픈챗 멤버 프로필 선택지에서 같은 dispatcher.
+
+**결정적 결론 — 봇에 KICKMEM 호출은 의미 없음**:
+- 일반 멤버 봇 N개 다 -500 → 서버 집계에 0 신호
+- 호스트 봇 하나 있어야 겨우 1 신호 (1 reporter 1 block)
+- 앱의 "차단하고 신고" 가 실제로 쓰는 건 chatLogs POST 뿐 (서버 수락 되는 부분). "차단" 은 UX 눈속임
+
+**실질 임계 돌파 레버 (재정의)**:
+1. **chatLogs 다계정 fanout** (N명이 같은 유저 신고)
+2. **ocBatch** — 같은 저자의 여러 메시지를 1 요청에 5개까지 묶음. "반복 유해" 가중 신호
+3. KICKMEM 은 봇 계정이 그 방 호스트/부방장일 때만 1 신호 추가 (드문 케이스)
+
+**봇 UI 정정 (rp-v58)**:
+- `postBlock` 체크박스 **기본 OFF** + 라벨 "호스트/부방장 봇 전용, 일반 멤버는 -500"
+- `ocBatch` 체크박스 **기본 ON** + 라벨 "★ 임계 돌파 핵심"
+- 최상단 안내 — KICKMEM 이 silent-accept 돌파 핵심이라던 이전 marketing 제거, 다계정 fanout + ocBatch 로 대체
+
 ### ★★★ 2026-11-15 6차 확정 — 5차 결론 정정 ★★★
 
 5차 Fork 가 "`/c/fraud/report/link` = 프로필 '차단하고 신고'" 라고 결론 냈지만 **사용자 UI 스크린샷으로 틀림 확정**. 실제 UI 플로우:
