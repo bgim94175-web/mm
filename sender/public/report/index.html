@@ -260,7 +260,9 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     </div>
     <div class="row">
       <button onclick="ocDump()" style="background:#3b6ef5">봇 요청 바이트 덤프 (앱과 비교용)</button>
+      <button onclick="ocDebugMatrix()" style="background:#5c3a1a">🧪 4-mode 매트릭스 (범인 찾기)</button>
     </div>
+    <div class="me" style="color:#9cf;margin-top:6px">🧪 매트릭스: 4 조합 (대·소문자 × ADID on/off) 을 1초 간격으로 쏴서 어느 변수가 -500 범인인지 즉시 확정. 같은 logId 4번 쏘지만 서버가 중복 걸러주니 큰 문제 없음.</div>
   </div>
 
   <h2 style="margin-top:14px">🔍 처분 감지 (대상 상태 모니터)</h2>
@@ -1169,6 +1171,16 @@ async function dump() {
   } catch (e) { $('out').textContent = '실패: ' + e.message }
 }
 // ★ 앱 캡쳐와 바이트 비교용. 실제 발사 안 함. frida android-openchat-http-capture.js 출력과 동일 포맷.
+async function ocDebugMatrix() {
+  if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
+  const category = ($('ocCat').value || 'violent').trim().toLowerCase()
+  const ctx = ctxWithInject()
+  $('out').textContent = '🧪 4-mode 매트릭스 쏘는 중… (~6초)'
+  try {
+    const j = await post('/report/openchat-debug-matrix', { ctx, category })
+    $('out').textContent = j.text || JSON.stringify(j, null, 1)
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
+}
 async function ocDump() {
   if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
   const category = ($('ocCat').value || 'violent').trim().toLowerCase()

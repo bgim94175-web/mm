@@ -38,14 +38,27 @@ const CATEGORY_NORMALIZE = {
   RIGHT: 'right_infringement', PROTECTCHILD: 'protect_child',
   ILLEGAL_FILMING: 'illegal_filming', YOUTH_UNSUITABLE: 'youth_unsuitable',
 }
+const CATEGORY_UPPER = {
+  violent: 'VIOLENT', sexual: 'SEXUAL', spam: 'SPAM', fraud: 'FRAUD',
+  illegal: 'ILLEGAL', privacy: 'PRIVACY', suicide: 'SUICIDE', etc: 'ETC',
+  right_infringement: 'RIGHT', protect_child: 'PROTECTCHILD',
+  illegal_filming: 'ILLEGAL_FILMING', youth_unsuitable: 'YOUTH_UNSUITABLE',
+}
 function normalizeCategory(c) {
   const s = String(c || '').trim()
-  if (CATEGORIES.includes(s)) return s
-  if (CATEGORY_NORMALIZE[s]) return CATEGORY_NORMALIZE[s]
-  // 임의 대문자/언더스코어 조합 — 소문자화 시도
-  const low = s.toLowerCase()
-  if (CATEGORIES.includes(low)) return low
-  return PROFANITY_CATEGORY
+  let wire = s
+  if (CATEGORIES.includes(s)) wire = s
+  else if (CATEGORY_NORMALIZE[s]) wire = CATEGORY_NORMALIZE[s]
+  else {
+    const low = s.toLowerCase()
+    wire = CATEGORIES.includes(low) ? low : PROFANITY_CATEGORY
+  }
+  // 환경변수 REPORT_CATEGORY_CASE=upper 면 대문자 enum 포맷으로 (이전 상태)
+  // 디폴트는 소문자 snake_case (8차 분석 결과)
+  if (String(process.env.REPORT_CATEGORY_CASE || '').toLowerCase() === 'upper') {
+    return CATEGORY_UPPER[wire] || wire.toUpperCase()
+  }
+  return wire
 }
 
 const GAP = 400
@@ -260,15 +273,51 @@ async function hit(body, { timeoutMs = 8000, host = HOST, path = PATH, cred, ret
 export async function reportOne(ctx, category, opts = {}) {
   if (!ctx || !ctx.chatId || !ctx.logId || !ctx.authorId) return { ok: false, text: 'chatId · logId · authorId 필요' }
   if (!ctx.linkId) return { ok: false, text: 'linkId 필요 (방을 pickRoom 으로 선택해야 자동 채워짐)' }
-  const body = buildBody(ctx, category)
-  // APK bi90 가 모든 요청에 Accept-Language·C(UUID) 를 붙임 → 기본 true. opts.includeApkHeaders===false 로 끌 수 있음.
-  const includeApkHeaders = opts.includeApkHeaders === false ? false : true
-  const r = await hit(body, { cred: opts.cred, retries: opts.retries != null ? opts.retries : 1, includeApkHeaders })
-  const ok = r.httpCode === 200 && r.status === 0
-  return {
-    ok, category, sent: r.sent, http: r.httpCode, status: r.status, respBody: r.body, respHeaders: r.headers, text: r.text, attempt: r.attempt,
-    msg: (ok ? '★ 접수' : '실패') + ' category=' + category + ' http=' + r.httpCode + ' status=' + r.status + (r.err ? ' err=' + r.err : '') + (r.attempt ? ' (재시도#' + r.attempt + ')' : ''),
+  // 디버그 override — opts.adidMode / opts.categoryUpper 로 환경변수 일시 오버라이드
+  const saveAdid = process.env.REPORT_ADID_MODE
+  const saveCat = process.env.REPORT_CATEGORY_CASE
+  if (opts.adidMode) process.env.REPORT_ADID_MODE = opts.adidMode
+  if (opts.categoryUpper) process.env.REPORT_CATEGORY_CASE = 'upper'
+  else if (opts.categoryUpper === false) process.env.REPORT_CATEGORY_CASE = 'lower'
+  try {
+    const body = buildBody(ctx, category)
+    const includeApkHeaders = opts.includeApkHeaders === false ? false : true
+    const r = await hit(body, { cred: opts.cred, retries: opts.retries != null ? opts.retries : 1, includeApkHeaders })
+    const ok = r.httpCode === 200 && r.status === 0
+    return {
+      ok, category, sent: r.sent, http: r.httpCode, status: r.status, respBody: r.body, respHeaders: r.headers, text: r.text, attempt: r.attempt,
+      msg: (ok ? '★ 접수' : '실패') + ' category=' + category + ' http=' + r.httpCode + ' status=' + r.status + (r.err ? ' err=' + r.err : '') + (r.attempt ? ' (재시도#' + r.attempt + ')' : ''),
+    }
+  } finally {
+    if (opts.adidMode) { if (saveAdid === undefined) delete process.env.REPORT_ADID_MODE; else process.env.REPORT_ADID_MODE = saveAdid }
+    if (opts.categoryUpper !== undefined) { if (saveCat === undefined) delete process.env.REPORT_CATEGORY_CASE; else process.env.REPORT_CATEGORY_CASE = saveCat }
   }
+}
+
+// ★ 4-mode debug matrix — 어느 변수가 -500 범인인지 한 번에 확정
+export async function debugMatrix(ctx, category) {
+  const modes = [
+    { tag: '(1) 대문자 + ADID off  (교정 전 상태)', adidMode: 'off',          categoryUpper: true },
+    { tag: '(2) 대문자 + ADID on   (ADID 만 추가)',   adidMode: 'per_account', categoryUpper: true },
+    { tag: '(3) 소문자 + ADID off  (category 만 교정)', adidMode: 'off',          categoryUpper: false },
+    { tag: '(4) 소문자 + ADID on   (지금 상태)',       adidMode: 'per_account', categoryUpper: false },
+  ]
+  const rows = []
+  for (const m of modes) {
+    const r = await reportOne(ctx, category, { adidMode: m.adidMode, categoryUpper: m.categoryUpper, retries: 0 })
+    rows.push({ ...m, http: r.http, status: r.status, ok: r.ok })
+    await sleep(1500)
+  }
+  const lines = ['category=' + category + ' · l=' + ctx.logId + ' · 4-mode matrix', '']
+  for (const r of rows) lines.push(r.tag + '  →  http=' + r.http + ' status=' + r.status + (r.ok ? ' ★' : ''))
+  lines.push('')
+  lines.push('※ 판정:')
+  lines.push('  · (1) status=0, (2~4) != 0 → ADID 추가가 범인')
+  lines.push('  · (1)(3) status=0, (2)(4) != 0 → ADID 추가가 범인 (category 무관)')
+  lines.push('  · (1)(2) status=0, (3)(4) != 0 → category 소문자화가 범인')
+  lines.push('  · 전부 != 0 → 둘 다 아님, 다른 원인 (attachment 등)')
+  lines.push('  · (4)==0 → 현재 상태 자체 정상')
+  return { ok: true, rows, text: lines.join('\n') }
 }
 
 // ★ "차단하고 신고하기" — Report POST 1회 + KICKMEM LOCO 1회 (block=true).
