@@ -159,14 +159,13 @@ export function assertShape(o) {
   return true
 }
 
-// sendAt 자동 보정 — 미래/30일 이전이면 지금으로
+// ★ v59-A D4 — sendAt 은 chatLog.c() 원본값 그대로. 30일 컷/5분 컷 제거.
+// 원래 메시지가 40일 전이라면 그 40일 전 시각이 그대로 나가야 앱 캡쳐와 일치한다.
+// 서버가 타임스탬프로 cross-check 할 수도 있고, 그 경우 "now 로 치환" 은 신호가 된다.
+// strictInt 로 int32 범위 검증. s <= 0 (취득 못한 메시지) 일 때만 now 로 대체.
 function clampSendAt(raw) {
-  const now = Math.floor(Date.now() / 1000)
-  let n = Number(raw)
-  if (!Number.isFinite(n) || n <= 0) return now
-  if (n > now + 300) return now
-  if (n < now - 30 * 86400) return now
-  return Math.floor(n)
+  const s = strictInt(raw, 'sendAt')
+  return s <= 0 ? Math.floor(Date.now() / 1000) : s
 }
 
 // ★ v59-A D1/D5/D6/D8 — logItem 재작성. yud1.f + yud1.j 그대로:
