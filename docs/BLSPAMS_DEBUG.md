@@ -97,7 +97,49 @@ yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), r
   b) 계정별 간격·지터 충분해서 어뷰징 필터 안 걸리게
   c) 메시지 원문 보존 (injectText 는 opt-in, 이미 rp-v44 에서 처리)
 
-### ★★★ 2026-11-15 프로필 신고 플로우 확정 — silent-accept 돌파 최유력 경로 (5차 분석) ★★★
+### ★★★ 2026-11-15 6차 확정 — 5차 결론 정정 ★★★
+
+5차 Fork 가 "`/c/fraud/report/link` = 프로필 '차단하고 신고'" 라고 결론 냈지만 **사용자 UI 스크린샷으로 틀림 확정**. 실제 UI 플로우:
+
+1. 프로필 모달 → "차단하기" 버튼
+2. 다이얼로그: 🚫 차단 / 🚨 차단하고 신고
+3. "차단하고 신고" OnClick → Intent 로 **ChatRoom 뷰 전환** + `chatLogSelectMode=true` + `abuseReportAfterAction=Block`
+4. ChatRoom 하단에 "신고할 메시지를 선택하세요 (최대 5개)" 바
+5. 메시지 선택 → 카테고리 선택 → **chatLogs POST**
+6. chatLogs 성공 → **KICKMEM** (afterAction=Block)
+
+**6차 재분석 결론**:
+
+| 항목 | 6차 확정 |
+|---|---|
+| "차단하고 신고" 최종 엔드포인트 | **`/c/fraud/report/chatLogs`** (메시지 신고와 동일) |
+| 호출 순서 | **(B) chatLogs POST 성공 → KICKMEM** (= 봇 `reportAndBlock` 구조 그대로 올바름) |
+| chatLogs 바디 추가 flag | **없음** (`linkedBlock`/`blockAfter` 등 전부 없음) |
+| `OlkChatRoomAbuseReportAction` | **5개** (TimeChatLog/Block/Blind/Leave/Rewrite) — 4차에서 TimeChatLog 놓침 |
+| TimeChatLog | = chatLogs POST action 자체 |
+| chatLogInfos 최대 5개 | 재확인 OK, 봇 `ocBatch` 로 구현됨 |
+
+**`/c/fraud/report/link` 의 실제 정체**:
+- **"오픈링크(= 방 자체) 신고"** = 호스트 아닌 일반 멤버가 **채팅방 설정 메뉴에서 방을 신고**
+- `OlkLinkAbuseReportApiParams` 는 이 플로우 전용
+- 메시지 신고와 **독립 축**. 서버 심사 큐도 별도일 가능성 — 보조 수단으로 가치 있음
+- "프로필(사람) 신고" 는 **별도 `ProfileAbuseReportApiParams`** (아직 미추적)
+- `/c/fraud/report/profilePost` = 오픈프로필 **포스트(게시글)** 신고
+
+**봇에 미반영된 결정적 요소** — 다계정별 LOCO KICKMEM:
+- 현재 봇: fanout 시 각 계정이 chatLogs POST 는 자기 oauth 로, KICKMEM 은 **primary 1회만** 호출
+- 실제 앱: 각 reporter 가 **각자** "차단하고 신고" 누름 → 그 계정의 **자기 oauth + duuid** 로 chatLogs + KICKMEM 둘 다 호출
+- 서버가 "N명의 reporter 가 각자 차단했다" 를 **별도 가중치**로 집계할 가능성 매우 큼
+- 지금 봇은 "N명이 신고했지만 1명만 차단했다" → **임계 가중치 낮음** 가능성
+
+**다계정 LOCO 구현 비용** (별도 작업으로 분리):
+- 각 계정별 `KakaoTalkClient` 인스턴스 유지
+- 각 계정별 LOCO 세션 (booking + checkin + LOGINLIST)
+- Render Free tier cold-start 와 쿨다운 충돌 관리
+- anti-abuse 리스크 상승 (여러 계정 동시 LOGINLIST → 서버 self-eviction 유발 가능)
+- 사용자 승인 필요
+
+### ~~2026-11-15 5차 분석 (틀린 결론 보존)~~
 
 사용자 2차 수정 제보: "**차단하고 신고하기** 는 메시지 신고가 아니라 **상대방 프로필**에 들어가서 하는 메뉴". APK 재분석 결과:
 
