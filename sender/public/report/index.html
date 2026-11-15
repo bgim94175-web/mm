@@ -738,6 +738,7 @@ function renderAccounts() {
       '<div class="s">uid ' + a.userId + last + '</div>' +
       '<div style="margin-top:6px">' +
         '<button class="subBtn acc-toggle" data-uid="' + a.userId + '" data-next="' + (!a.active) + '">' + (a.active ? '비활성화' : '활성화') + '</button>' +
+        (a.isPrimary ? '' : ' <button class="subBtn acc-promote" data-uid="' + a.userId + '" style="background:#1a3a5c;color:#9cf">primary 로 전환</button>') +
         (a.isPrimary ? '' : ' <button class="subBtn acc-remove" data-uid="' + a.userId + '" style="background:#5c1a1a;color:#fcc">삭제</button>') +
       '</div>' +
     '</div>'
@@ -748,6 +749,20 @@ function renderAccounts() {
       const uid = el.dataset.uid; const nx = el.dataset.next === 'true'
       await post('/report/accounts/toggle', { userId: uid, active: nx })
       await refreshAccounts()
+    })
+  })
+  Array.from(box.querySelectorAll('.acc-promote')).forEach((el) => {
+    el.addEventListener('click', async (ev) => {
+      ev.stopPropagation()
+      if (!confirm('이 계정을 primary 로 전환?\n(현재 primary 의 LOCO 세션 끊고 이 계정으로 재접속)\n\n주의: 이 계정이 실제로 신고할 방 멤버여야 의미 있음.')) return
+      const uid = el.dataset.uid
+      $('me').textContent = 'primary 전환 중… (LOCO 재접속 1~2초)'
+      try {
+        const j = await post('/report/accounts/promote', { userId: uid })
+        alert(j.message || (j.ok ? 'OK' : '실패'))
+        await refreshMe()
+        await refreshAccounts()
+      } catch (e) { alert('실패: ' + e.message) }
     })
   })
   Array.from(box.querySelectorAll('.acc-remove')).forEach((el) => {

@@ -356,6 +356,12 @@ async function handle(req, res) {
     const r = await ACC.setActive(String(b.userId), !!b.active)
     return send(res, 200, r)
   }
+  if (p === '/report/accounts/promote' && req.method === 'POST') {
+    const b = await readBody(req)
+    if (!b.userId) return send(res, 400, { ok: false, error: 'userId' })
+    const r = await ACC.promoteToPrimary(String(b.userId))
+    return send(res, 200, r)
+  }
 
   if (p === '/report/rooms') {
     if (!LOCO.ready()) {

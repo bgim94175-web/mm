@@ -147,3 +147,35 @@ export async function addPasscode(code) {
 export async function pendingState() {
   return pending ? { email: maskEmail(pending.email), deviceType: pending.deviceType } : null
 }
+
+// ★ primary 교체 — DB 플래그 변경 + report-auth 의 cred 교체 + LOCO 재접속.
+// 지금 primary 가 서버 격리 (LOGINLIST/LCHATLIST 둘 다 empty) 당한 경우 탈출용.
+export async function promoteToPrimary(userId) {
+  const AUTH = await import('./report-auth.mjs')
+  const LOCO = await import('./report-loco.mjs')
+  const POOL = await import('./report-loco-pool.mjs')
+  try {
+    const acc = await DB.setPrimary(userId)
+    // report-auth 의 메모리 cred 교체 (saveCred 가 Postgres 의 report_auth 테이블에도 기록)
+    await AUTH._setCredDirect({
+      oauthToken: acc.oauthToken,
+      refreshToken: acc.refreshToken || '',
+      userId: String(acc.userId),
+      duuid: acc.duuid,
+      email: acc.email || '',
+      deviceType: acc.deviceType || 'tablet',
+    })
+    // LOCO 세션 끊고 pool slot 도 정리 (이전 계정 세션 해제)
+    try { LOCO.close() } catch (e) {}
+    try { POOL.closeAll() } catch (e) {}
+    // 새 primary 로 LOCO 재접속
+    try {
+      await LOCO.connect()
+      return { ok: true, userId: acc.userId, email: maskEmail(acc.email), locoConnected: true, message: 'primary 교체 + LOCO 재연결 OK' }
+    } catch (e) {
+      return { ok: true, userId: acc.userId, email: maskEmail(acc.email), locoConnected: false, message: 'primary 교체는 됐지만 LOCO 재연결 실패: ' + (e && e.message) }
+    }
+  } catch (e) {
+    return { ok: false, message: String(e && e.message ? e.message : e) }
+  }
+}

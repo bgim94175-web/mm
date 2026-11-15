@@ -196,6 +196,33 @@ export async function deleteAccount(userId) {
   fileAccountsSave(arr)
 }
 
+// ★ primary 교체 — 이 userId 만 is_primary=true, 나머지 전부 false. 트랜잭션.
+export async function setPrimary(userId) {
+  const uid = String(userId)
+  if (backend === 'pg') {
+    const c = await pool.connect()
+    try {
+      await c.query('BEGIN')
+      await c.query('UPDATE report_accounts SET is_primary=false WHERE user_id<>$1', [uid])
+      const r = await c.query('UPDATE report_accounts SET is_primary=true, updated_at=now() WHERE user_id=$1 RETURNING user_id, oauth_token, refresh_token, duuid, email, device_type', [uid])
+      await c.query('COMMIT')
+      if (!r.rows.length) throw new Error('userId=' + uid + ' 계정 없음')
+      const row = r.rows[0]
+      return {
+        userId: row.user_id, oauthToken: row.oauth_token, refreshToken: row.refresh_token || '',
+        duuid: row.duuid, email: row.email || '', deviceType: row.device_type || 'tablet',
+      }
+    } catch (e) { try { await c.query('ROLLBACK') } catch (x) {}; throw e }
+    finally { c.release() }
+  }
+  const arr = fileAccountsLoad()
+  const t = arr.find((x) => String(x.userId) === uid)
+  if (!t) throw new Error('userId=' + uid + ' 계정 없음')
+  for (const a of arr) a.isPrimary = (String(a.userId) === uid)
+  fileAccountsSave(arr)
+  return { userId: t.userId, oauthToken: t.oauthToken, refreshToken: t.refreshToken || '', duuid: t.duuid, email: t.email || '', deviceType: t.deviceType || 'tablet' }
+}
+
 export async function setAccountActive(userId, active) {
   if (backend === 'pg') {
     await pool.query('UPDATE report_accounts SET active=$1, updated_at=now() WHERE user_id=$2', [!!active, String(userId)])

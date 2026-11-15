@@ -95,6 +95,21 @@ export async function passcode(code) {
   return login(email, password, deviceType)
 }
 
+// ★ primary 교체용 — 외부 모듈이 cred 를 직접 교체. report_auth 테이블·메모리 캐시 동기화.
+export async function _setCredDirect(c) {
+  if (!c || !c.oauthToken || !c.userId || !c.duuid) throw new Error('cred 필드 부족')
+  await save({
+    oauthToken: String(c.oauthToken),
+    refreshToken: String(c.refreshToken || ''),
+    userId: String(c.userId),
+    duuid: String(c.duuid),
+    email: String(c.email || ''),
+    deviceType: c.deviceType === 'pc' ? 'pc' : 'tablet',
+  })
+  try { await DB.clearLocoFail() } catch (e) {}  // 이전 primary 의 LOCO 쿨다운 해제
+  return cred
+}
+
 export function me() {
   const c = cred
   if (!c || !c.oauthToken) return { loggedIn: false }
