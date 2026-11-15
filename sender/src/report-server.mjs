@@ -36,13 +36,17 @@ function send(res, code, body, type) {
 function readBody(req) {
   return new Promise(function (resolve) {
     let b = ''
+    let done = false
+    const finish = function (v) { if (!done) { done = true; resolve(v) } }
     req.on('data', function (c) {
       b += c
-      if (b.length > 1e6) req.destroy()
+      if (b.length > 1e6) { req.destroy(); finish({}) }
     })
     req.on('end', function () {
-      try { resolve(JSON.parse(b || '{}')) } catch (e) { resolve({}) }
+      try { finish(JSON.parse(b || '{}')) } catch (e) { finish({}) }
     })
+    req.on('aborted', function () { finish({}) })
+    req.on('error', function () { finish({}) })
   })
 }
 
