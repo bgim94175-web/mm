@@ -30,25 +30,71 @@ function chatTypeName(t) {
   }
 }
 
-// 로그인 뒤 서버가 LOGINLIST 응답에 통째로 담아 준 방 목록
-export function rooms() {
+// LCHATLIST paginate — LOGINLIST 가 partial snapshot(chatDatas 비게) 돌려줄 때
+// agent-messenger client.getChats() 가 내부적으로 쓰는 공식 복구 경로.
+// 새로 등록된 기기는 LOGINLIST 가 eof=true 로 빈 리스트 → LCHATLIST 로 canonical
+// chat list 수동 조회 (device history 와 무관).
+async function fetchAllChatsViaLchatlist() {
+  const L = await longOf()
+  const MAX_PAGES = 20
+  const all = []
+  let lastTokenId = L.fromNumber(0)
+  let lastChatId = L.fromNumber(0)
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const r = await send('LCHATLIST', {
+      chatIds: [],
+      maxIds: [],
+      lastTokenId,
+      lastChatId,
+    })
+    if (!r || r.statusCode !== 0) throw new Error('LCHATLIST st=' + (r && r.statusCode))
+    const b = r.body || {}
+    const chats = Array.isArray(b.chatDatas) ? b.chatDatas : []
+    for (const c of chats) all.push(c)
+    if (b.eof === true) break
+    if (chats.length === 0) break
+    if (b.lastTokenId != null) {
+      lastTokenId = typeof b.lastTokenId === 'object' ? b.lastTokenId : L.fromString(String(b.lastTokenId))
+    }
+    if (b.lastChatId != null) {
+      lastChatId = typeof b.lastChatId === 'object' ? b.lastChatId : L.fromString(String(b.lastChatId))
+    }
+  }
+  return all
+}
+
+// 로그인 뒤 서버가 LOGINLIST 에 담아 준 방 목록 (+ 비어있으면 LCHATLIST 폴백)
+export async function rooms() {
   if (!ready()) {
     return {
       ok: false, loco: false, count: 0, rooms: [],
       text: 'LOCO 세션 없음 — 방 목록은 LOGINLIST 에 담겨 오므로 LOCO 가 반드시 열려야 함.\n'
         + '· 상단 "LOCO 재연결" 버튼 눌러보기 (성공하면 바로 뜸)\n'
-        + '· 그래도 실패면 폰 카카오톡 로그아웃 후 다시 "LOCO 재연결"\n'
-        + '· LOCO 없이도 "직접 chatId / linkId / logId 입력" 모드로 신고는 가능 (하단 raw LOCO / 메시지 신고 섹션)',
+        + '· 그래도 실패면 폰 카카오톡 로그아웃 후 다시 "LOCO 재연결"',
     }
   }
   const lr = loginResult()
-  const chatDatas = (lr && Array.isArray(lr.chatDatas)) ? lr.chatDatas : []
+  let chatDatas = (lr && Array.isArray(lr.chatDatas)) ? lr.chatDatas : []
+  let source = 'LOGINLIST'
+  // partial snapshot 폴백 — LOGINLIST 가 비면 LCHATLIST 로 직접 조회
   if (chatDatas.length === 0) {
-    return {
-      ok: true, loco: true, count: 0, rooms: [],
-      text: '방 0개 — LOGINLIST 는 돌아왔는데 chatDatas 가 비었음. 신규 기기 등록이거나 서버가 partial snapshot 돌려줬을 가능성.\n'
-        + '· 폰 카카오톡에서 방 리스트 리프레시 → 봇 "LOCO 재연결"\n'
-        + '· 또는 chatId/linkId 를 직접 알고 있으면 하단 섹션에서 수동 입력',
+    try {
+      const fetched = await fetchAllChatsViaLchatlist()
+      if (fetched.length) { chatDatas = fetched; source = 'LCHATLIST(폴백)' }
+    } catch (e) {
+      return {
+        ok: false, loco: true, count: 0, rooms: [],
+        text: '방 0개 — LOGINLIST 비었고 LCHATLIST 폴백도 실패: ' + (e && e.message ? e.message : e)
+          + '\n· chatId/linkId 알면 하단 섹션에서 수동 입력 가능',
+      }
+    }
+    if (chatDatas.length === 0) {
+      return {
+        ok: true, loco: true, count: 0, rooms: [], source: 'LCHATLIST(empty)',
+        text: '방 0개 — LCHATLIST 도 빈 리스트. 이 primary 계정은 정말 참여 방이 없거나 서버가 이 기기를 완전 격리 중.'
+          + '\n· 폰 카카오톡에서 방 리스트 리프레시 후 "LOCO 재연결"'
+          + '\n· 또는 chatId/linkId 알고 있으면 하단 섹션에서 수동 입력',
+      }
     }
   }
   const items = chatDatas.map((c) => {
@@ -72,7 +118,7 @@ export function rooms() {
     const A = BigInt(a.lastLogId || '0'), B = BigInt(b.lastLogId || '0')
     return A > B ? -1 : A < B ? 1 : 0
   })
-  return { ok: true, count: items.length, rooms: items, text: '방 ' + items.length + '개' }
+  return { ok: true, count: items.length, rooms: items, source, text: '방 ' + items.length + '개 (source=' + source + ')' }
 }
 
 // ★ chatId 하나만 알아도 방 정보 복구 — LOGINLIST 가 partial snapshot 돌려줘서

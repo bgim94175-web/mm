@@ -362,7 +362,9 @@ async function handle(req, res) {
       try { await LOCO.connect() }
       catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message ? e.message : e) }) }
     }
-    return send(res, 200, BROWSE.rooms())
+    // LCHATLIST 폴백은 bsearch 네트워크라 queue 안쪽에서
+    const r = await queue(function () { return BROWSE.rooms() })
+    return send(res, 200, r)
   }
   // chatId 로 방 하나만 CHATINFO 조회 (LOGINLIST partial snapshot 폴백)
   if (p === '/report/room-lookup') {
