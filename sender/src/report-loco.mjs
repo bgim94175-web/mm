@@ -68,6 +68,13 @@ export async function send(method, body) {
   return conn().sendPacket(method, body)
 }
 
+// ★ v59-A §12 — report-loco::rewrites 스텁 (자리만). v59 본작업에서 실제 송출 구현.
+// REWRITES body: {linkId:Long, chatId:Long, chatLogInfos:String}. category 키 없음 (§11).
+// 구현 시 at50$a.a → tf3 BSON encoder 를 거친 body 를 sendPacket('REWRITES', body) 로 전달.
+export async function rewrites(/* linkId, chatId, chatLogInfosString */) {
+  throw new Error('v59-A: REWRITES 는 다음 태스크에서 구현 (스텁 상태)')
+}
+
 // ★ KICKMEM — openlink "차단하고 신고하기" 가 신고 성공 후 호출하는 LOCO 메서드.
 // APK 4차 분석 (2026-11-15): Lbly$d.h → Lfzc0$d.h → Lfzc0$d.e → Ljs50.Y → core/loco/d.M0 →
 // Lt131.W → Ltw30.f(yy50$a) 바디 조립. 필드 4개 확정: {li, c, mid, r}.
