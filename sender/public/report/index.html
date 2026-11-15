@@ -212,8 +212,9 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
       <b>목적:</b> "원문 위조가 서버에 실제로 반영되는지" 를 바이트 레벨 diff 로 확인.<br>
       <b>봇 쪽:</b> 아래 버튼 — 실제 발사 안 함. 보낼 바이트 전체(URL·헤더·바디·hex) 를 뽑음.<br>
       <b>앱 쪽:</b> <code style="background:#111;padding:2px 5px;border-radius:4px">tools/frida/android-openchat-http-capture.js</code>
-      — 안드로이드 (루팅/Magisk) + <code>frida-server</code> → <br>
+      — 실제 안드로이드(루팅/Magisk) <b>또는 BlueStacks (x86_64)</b> + <code>frida-server</code> → <br>
       &nbsp;&nbsp;<code style="background:#111;padding:2px 5px;border-radius:4px">frida -U -n com.kakao.talk -l 위 스크립트</code> → 앱에서 "신고하고 나가기" 1회.<br>
+      &nbsp;&nbsp;BlueStacks 세팅 가이드: <code style="background:#111;padding:2px 5px;border-radius:4px">tools/frida/BLUESTACKS_SETUP.md</code><br>
       <b>비교:</b> 양쪽 출력 포맷 동일. headers·body·hex 를 쭉 훑어서 다른 바이트 있는지 확인.<br>
       → 바이트 같으면 위조 자체는 성공(= 서버가 심사자료로 조작문 받음), 서버 cross-check 가 원인.<br>
       → 바이트 다르면 그 필드가 결정적.
@@ -328,6 +329,23 @@ async function refreshMe() {
     const loco = j.loco === 'O' ? '🟢' : '🔴' + (j.locoError ? ' ' + j.locoError : '')
     const db = j.dbBackend === 'pg' ? '🐘 Neon' : '💾 file'
     $('me').textContent = '로그인됨 · ' + j.email + ' · uid ' + j.userId + ' · LOCO ' + loco + ' · ' + db
+    // LOCO 실패 시 안내 배너 — 오픈챗 HTTP 신고에는 LOCO 필요 없음 (oauth 토큰만 씀)
+    if (j.loco !== 'O') {
+      let hint = $('locoHint')
+      if (!hint) {
+        hint = document.createElement('div')
+        hint.id = 'locoHint'
+        hint.style.cssText = 'margin:8px 0;padding:10px 12px;border:1px solid #c0392b;border-radius:10px;background:#2a1414;color:#fca;font-size:12px;line-height:1.55'
+        $('me').insertAdjacentElement('afterend', hint)
+      }
+      hint.innerHTML = '🔴 <b>LOCO 세션 거부됨</b> (' + esc(String(j.locoError || '사유 미상')) + ')<br>'
+        + '· <b>오픈챗 HTTP 신고 기능은 정상 작동</b>합니다 — oauth 토큰만 쓰고 LOCO 세션 안 탐<br>'
+        + '· LOCO 는 "방 둘러보기·실시간 메시지 fetch·BLSPAMS(일반방 신고)" 에만 필요<br>'
+        + '· 원인 유력: (a) 같은 계정이 다른 기기에서 접속 중이라 서버가 self-eviction 거부, (b) 지역/계정 anti-abuse 플래그<br>'
+        + '· 해결: 폰 카카오톡 로그아웃 후 "LOCO 재연결" 버튼. 또는 봇 운영 중엔 폰 앱 안 쓰기.'
+    } else {
+      const old = $('locoHint'); if (old) old.remove()
+    }
     refreshAccounts()  // 계정 풀 자동 로드
   } catch (e) { $('me').textContent = '상태 조회 실패: ' + e.message }
 }

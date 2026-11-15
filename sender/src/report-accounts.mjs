@@ -67,14 +67,16 @@ export async function remove(userId) {
 // ─── 추가 로그인 ───
 // 다른 계정의 email/password 를 받아 로그인 진행. passcode 필요하면 pending 유지.
 // LOCO 세션은 **열지 않는다** — 오직 oauth 토큰만 획득해서 DB 에 저장.
-export async function addLogin(email, password, deviceType = 'tablet') {
-  if (!email || !password) return { ok: false, message: '아이디·비번 필요' }
-  // 이미 저장된 계정이면 재로그인 — 기존 duuid 보존
-  const existing = await DB.listAccounts()
-  const prev = existing.find((a) => String(a.email).toLowerCase() === String(email).toLowerCase())
-  const duuid = (prev && prev.duuid) || randomUUID().replace(/-/g, '')
+//
+// ★ 2026-11-15 버그 수정 (passcode 무한반복):
+// 이전 코드는 addPasscode() 가 registerDevice 뒤 addLogin() 을 재귀 호출했는데,
+// 재귀 addLogin() 에서 `existing.find(email)` 이 아직 null (DB 저장 전) 이라
+// **duuid 를 새로 만들어버렸음**. 서버는 "모르는 새 기기" 라 다시 provide_passcode
+// 반환 → 무한 루프. 수정: addLogin() 의 코어 로직을 _coreLogin(duuid) 로 뽑고,
+// addPasscode() 는 pending.duuid 를 그대로 전달해서 재시도. 1차 addLogin() 도
+// 같은 _coreLogin 을 쓰되 기존/새 duuid 자동 선택.
+async function _coreLogin(email, password, deviceType, duuid) {
   const am = await auth()
-
   let r
   try {
     r = await am.attemptLogin(email, password, duuid, deviceType === 'pc' ? 'pc' : 'tablet', false, null)
@@ -88,7 +90,7 @@ export async function addLogin(email, password, deviceType = 'tablet') {
       oauthToken: r.credentials.access_token,
       refreshToken: r.credentials.refresh_token || '',
       duuid, email, deviceType,
-      isPrimary: false,  // primary 는 report-auth.mjs 가 자동 설정
+      isPrimary: false,
       active: true,
     })
     pending = null
@@ -112,6 +114,23 @@ export async function addLogin(email, password, deviceType = 'tablet') {
   return { ok: false, message: (r && r.message) || '로그인 실패' }
 }
 
+export async function addLogin(email, password, deviceType = 'tablet') {
+  if (!email || !password) return { ok: false, message: '아이디·비번 필요' }
+  // 1) pending 에 같은 email 이 이미 들어있으면 그 duuid 를 **최우선**으로 재사용
+  //    (passcode 받는 동안 사용자가 "추가" 버튼 다시 눌러도 duuid 유지)
+  // 2) 아니면 DB 에 저장된 같은 email 의 duuid
+  // 3) 둘 다 없으면 새로 생성
+  let duuid
+  if (pending && String(pending.email).toLowerCase() === String(email).toLowerCase()) {
+    duuid = pending.duuid
+  } else {
+    const existing = await DB.listAccounts()
+    const prev = existing.find((a) => String(a.email).toLowerCase() === String(email).toLowerCase())
+    duuid = (prev && prev.duuid) || randomUUID().replace(/-/g, '')
+  }
+  return _coreLogin(email, password, deviceType, duuid)
+}
+
 export async function addPasscode(code) {
   if (!pending) return { ok: false, message: '먼저 "계정 추가" 로 아이디·비번을 넣으세요' }
   const { email, password, deviceType, duuid } = pending
@@ -120,8 +139,9 @@ export async function addPasscode(code) {
     const rg = await am.registerDevice(email, password, String(code || ''), duuid)
     if (rg && rg.error) return { ok: false, message: rg.message || '기기 등록 실패' }
   } catch (e) { return { ok: false, message: String(e.message || e) } }
-  pending = null
-  return addLogin(email, password, deviceType)
+  // ★ 핵심 수정: addLogin() 재귀 X — pending.duuid 그대로 _coreLogin 재호출.
+  // 이렇게 해야 재시도가 "같은 기기" 로 attemptLogin 하고 서버가 "등록된 기기" 로 인식.
+  return _coreLogin(email, password, deviceType, duuid)
 }
 
 export async function pendingState() {
