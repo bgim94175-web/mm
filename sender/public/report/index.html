@@ -215,20 +215,18 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <button class="p" onclick="ocReportBlock()" style="background:#c0392b">🚫 차단하고 신고 (primary · Report+KICKMEM)</button>
   </div>
 
-  <div style="margin-top:14px;padding:12px;border:1px solid #e67e22;border-radius:12px;background:#2a1a0a">
-    <div style="color:#fc9;font-weight:600;margin-bottom:6px">📱 프로필 신고 (/c/fraud/report/link) — <b>silent-accept 돌파 최유력 후보</b></div>
-    <div class="me" style="color:#fc9;margin-bottom:8px">
-      APK 5차 분석 결과: 메시지 신고(/chatLogs) 와 <b>완전히 다른 엔드포인트·심사 큐</b>.
-      바디는 <code>{category, linkId}</code> 2필드만 (chatId/userId 불필요). 상대 프로필 자체를 신고.
-      사용자 제보 "다른 정지툴의 '차단하고 신고하기'" 가 이 플로우.
+  <div style="margin-top:14px;padding:12px;border:1px solid #555;border-radius:12px;background:#1a1a1a;opacity:0.55">
+    <div style="color:#888;font-weight:600;margin-bottom:6px">📱 프로필 신고 (/c/fraud/report/link) — <b>가설 보류 중 (사용자 UI 스크린샷으로 틀림 확인)</b></div>
+    <div class="me" style="color:#888;margin-bottom:8px">
+      실제 "프로필 → 차단하기 → 차단하고 신고" 플로우는 **메시지 선택 (최대 5개) → 카테고리 → /chatLogs** 로 끝남.
+      /c/fraud/report/link 는 다른 UI 트리거 용도 — 6차 재분석 중. 결과 나오기 전까지 이 섹션은 사용 비추천.
     </div>
-    <label>linkId <span class="me" style="font-weight:normal">(방 pick 되어 있으면 자동 채워짐 · 수동 입력도 가능)</span></label>
+    <label style="color:#888">linkId (실험용)</label>
     <input id="plinkId" inputmode="numeric" placeholder="예: 478877695">
     <div class="row" style="margin-top:8px">
-      <button class="p" onclick="pLinkOne()">프로필 신고 1회 (primary)</button>
-      <button class="p" onclick="pLinkFanout()" style="background:#e67e22">🔥 프로필 신고 fanout (활성 계정 전부)</button>
+      <button onclick="pLinkOne()" style="background:#333;color:#888">(실험) /link 1회</button>
+      <button onclick="pLinkFanout()" style="background:#333;color:#888">(실험) /link fanout</button>
     </div>
-    <div class="me" style="margin-top:6px;color:#aba">⤷ "완료 후 차단 추가" 체크 켜 두면 primary 로 KICKMEM 1회 추가 (chatId/authorId 알려져 있을 때만).</div>
   </div>
 
   <div class="row" style="margin-top:8px"><button onclick="uVerdict()">u 판정 — 작성자(a)/대상(b)/없는번호(c) 3연발</button></div>
