@@ -234,19 +234,10 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
-  if (p === '/report/openchat-hosts' && req.method === 'POST') {
-    const b = await readBody(req)
-    const r = await queue(function () { return OPEN.probeHosts(b) })
-    return send(res, 200, r)
-  }
-  if (p === '/report/openchat-shapes' && req.method === 'POST') {
-    const b = await readBody(req)
-    const r = await queue(function () { return OPEN.probeShapes(String(b.host || ''), b.ctx || b) })
-    return send(res, 200, r)
-  }
+  // v59-A D13 — /openchat-hosts, /openchat-shapes 라우트 제거 (탐색 기능 없던 dead route).
   if (p === '/report/openchat-fire' && req.method === 'POST') {
     const b = await readBody(req)
-    const r = await queue(function () { return OPEN.fire(String(b.host || ''), b.ctx || b, b.reasons) })
+    const r = await queue(function () { return OPEN.fire(b.ctx || b, b.reasons) })
     return send(res, 200, r)
   }
   if (p === '/report/openchat-fireAll' && req.method === 'POST') {

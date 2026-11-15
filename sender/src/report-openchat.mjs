@@ -602,14 +602,9 @@ export async function fireAll(ctx) {
   return { ok: acceptedCats.length > 0, accepted: acceptedCats.length, acceptedCats, rows, text: '접수 ' + acceptedCats.length + '/' + ordered.length + ' [' + acceptedCats.join(',') + ']\n' + rows.join('\n') }
 }
 
-export async function probeHosts(ctx) {
-  const r = await reportOne(ctx, PROFANITY_CATEGORY)
-  return { ok: r.ok, host: HOST, rows: [HOST + ' → http=' + r.http + '/s=' + r.status], text: '(단일 호스트 확정) ' + HOST + '\n' + r.msg }
-}
-export async function probeShapes(host, ctx) {
-  const r = await reportOne(ctx, PROFANITY_CATEGORY)
-  return { ok: r.ok, rows: [r.msg], text: r.msg + '\n(바디 모양은 APK 기준 확정 — 이 결과는 "경로 작동 여부" 확인)' }
-}
+// v59-A D13 — probeHosts / probeShapes 는 reportOne 을 한 번 부를 뿐 탐색이 전혀 없었다.
+// 호스트는 §8 로 open.kakao.com 단일 확정, 바디 모양은 §9 로 완전 확정. 남겨 두면
+// "탐색 중" 이라는 오해만 생긴다. UI 에서 호출 흔적도 없음. 함수와 라우트 전부 제거.
 
 export async function fanout(ctx, category, userIds, { gapMs = 2500, jitterMs = 1500, shuffle = true, warmupFn = null, postBlock = false } = {}) {
   if (!ctx || !ctx.chatId || !ctx.logId || !ctx.authorId || !ctx.linkId) {
@@ -696,7 +691,8 @@ export async function diagnoseContentMatch(ctx, opts = {}) {
   }
 }
 
-export async function fire(host, ctx, reasons) {
+// v59-A D13 — fire(ctx, reasons). host 인자 제거 (§8 단일 호스트 확정).
+export async function fire(ctx, reasons) {
   const cats = Array.isArray(reasons) && reasons.length ? reasons.map((i) => CATEGORIES[Number(i)] || PROFANITY_CATEGORY) : CATEGORIES
   const rows = []
   let accepted = 0
