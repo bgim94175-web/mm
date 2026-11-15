@@ -30,6 +30,39 @@ function chatTypeName(t) {
   }
 }
 
+// ★ v59-A D0: chatLog 하나를 UI/신고용 공통 shape 로 — 값 없으면 null.
+// 이전엔 referer/revision 을 0 으로 폴백해서 신고 바디에 "referer":0 가 강제로 붙었다.
+// APK yud1.j 는 Integer 가 null 이면 키를 아예 안 넣는다 → 그 조건과 구분하려 null 유지.
+// attachmentJson 은 object 로 와도 string 으로 와도 null-safe. 길이 0 이면 null.
+function toAttachmentJson(raw) {
+  if (raw == null) return null
+  if (typeof raw === 'string') return raw.length > 0 ? raw : null
+  if (typeof raw === 'object') {
+    try { return Object.keys(raw).length ? JSON.stringify(raw) : null } catch (e) { return null }
+  }
+  return null
+}
+export function extractItem(log) {
+  const text = typeof log.message === 'string' ? log.message : ''
+  const sendAtN = Number(log.sendAt)
+  const typeN = Number(log.type)
+  const scopeN = Number(log.scope)
+  return {
+    logId: toIdString(log.logId),
+    authorId: toIdString(log.authorId),
+    type: Number.isFinite(typeN) ? typeN : null,
+    sendAt: Number.isFinite(sendAtN) && sendAtN > 0 ? sendAtN : null,
+    message: text.slice(0, 200),
+    // v59-A D0: 원본값 (yud1.f/j 와 동일 조건으로 송신하기 위해 null 유지)
+    attachmentJson: toAttachmentJson(log.attachment),
+    referer: log.referer != null ? Number(log.referer) : (log.ref != null ? Number(log.ref) : null),
+    revision: log.revision != null ? Number(log.revision) : (log.rev != null ? Number(log.rev) : null),
+    scope: Number.isInteger(scopeN) ? scopeN : null,
+    threadId: log.threadId != null ? toIdString(log.threadId) : null,
+    nick: '',  // messages() 가 MEMBER 응답으로 채움
+  }
+}
+
 // LCHATLIST paginate — LOGINLIST 가 partial snapshot(chatDatas 비게) 돌려줄 때
 // agent-messenger client.getChats() 가 내부적으로 쓰는 공식 복구 경로.
 // 새로 등록된 기기는 LOGINLIST 가 eof=true 로 빈 리스트 → LCHATLIST 로 canonical
@@ -228,26 +261,8 @@ export async function messages(chatId, cnt) {
   }
 
   // 최신순 정렬 후 상위 N (slice 를 sort 뒤에 — 그래야 최신 N 개)
-  // ★ 11차 반영: 봇이 신고 시 attachment 원본 · referer · revision · 긴글 조각 전부
-  // 넘겨야 서버 cross-check 통과. 그래서 여기서 raw chatLog 필드도 담아 보냄.
-  const items = logs.map((log) => {
-    const text = typeof log.message === 'string' ? log.message : ''
-    const attachmentRaw = typeof log.attachment === 'string' ? log.attachment : ''
-    const referer = Number(log.referer != null ? log.referer : (log.ref != null ? log.ref : 0)) || 0
-    const revision = Number(log.revision != null ? log.revision : (log.rev != null ? log.rev : 0)) || 0
-    return {
-      logId: toIdString(log.logId),
-      authorId: toIdString(log.authorId),
-      type: Number(log.type),
-      sendAt: Number(log.sendAt) || 0,
-      message: text.slice(0, 200),
-      // 서버 cross-check 용 원본값 (11차 발견)
-      attachment: attachmentRaw,     // chatLog.S() 상당 — JSONObject 또는 string
-      referer,                        // chatLog.h1()
-      revision,                       // chatLog.M.r()
-      nick: '',  // 아래에서 채움
-    }
-  })
+  // ★ v59-A D0: extractItem() 공통 함수로 통일. scope · threadId · attachmentJson 포함.
+  const items = logs.map(extractItem)
   items.sort((a, b) => {
     const A = BigInt(a.logId || '0'), B = BigInt(b.logId || '0')
     return A > B ? -1 : A < B ? 1 : 0
