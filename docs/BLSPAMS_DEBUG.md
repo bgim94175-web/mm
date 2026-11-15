@@ -97,6 +97,27 @@ yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), r
   b) 계정별 간격·지터 충분해서 어뷰징 필터 안 걸리게
   c) 메시지 원문 보존 (injectText 는 opt-in, 이미 rp-v44 에서 처리)
 
+### ★★★★★ 2026-11-15 10차 — 8차 category 결론 공식 정정 ★★★★★
+
+**라이브 4-mode matrix 결과 (같은 chatLog)**:
+| 모드 | status |
+|---|---|
+| UPPER + ADID off | **0** ★ |
+| UPPER + ADID on  | **0** ★ |
+| lower + ADID off | **-500** |
+| lower + ADID on  | **-500** |
+
+**판정**: **대문자가 wire 정답**. ADID 는 영향 없음 (있어도 없어도 UPPER 면 status=0).
+
+**10차 wire path 완전 재추적**:
+- `ChatLogsReportParams$$serializer.childSerializers()` = `[cre1=String, y860=Long, y860=Long, cre1=String]` — category 는 kotlinx 시점 **이미 String** (enum 아님)
+- Lrg61 enum 에 **`@SerialName` annotation 없음**, `@Serializable` 없음, `$$serializer` 없음
+- `sc$c` (TimeChatLog dispatcher) smali line 502: `Enum.name()` 직접 호출 → 대문자 그대로 ChatLogsReportParams 생성자에 전달
+- **yud1.d(Lrg61) 소문자 반환은 다른 엔드포인트 전용** (dd$a / fd$a / hd$a 가 호출, 아마 profile25 계열의 `jd.k()`). chatLogs 와 **완전 무관**
+- 8차 Fork 가 이 함수를 chatLogs wire 로 오인한 것
+
+**봇 상태 (rp-v63)**: UPPER 복구 완료 (커밋 9a8e037). ADID 는 그대로 유지 (영향 없어서 제거 불필요, 호환성 안전 margin).
+
 ### ★★★★★ 2026-11-15 9차 결정적 발견 — ADID 헤더 생략 ★★★★★
 
 **7차 fanout 실패 후 "또 큰 거 있다" 재분석. 발견**:
