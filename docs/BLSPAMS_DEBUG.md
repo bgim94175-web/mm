@@ -97,6 +97,70 @@ yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), r
   b) 계정별 간격·지터 충분해서 어뷰징 필터 안 걸리게
   c) 메시지 원문 보존 (injectText 는 opt-in, 이미 rp-v44 에서 처리)
 
+### ★★★★★ 2026-11-15 8차 결정적 발견 — category 대소문자 ★★★★★
+
+**7차 이후 사용자 요청으로 "뭔가 다른게 있을 것" 재분석. yud1.d(Lrg61) enum→string 매핑 확정:**
+
+| 봇이 보내던 (대문자) | 서버가 기대 (snake_case 소문자) |
+|---|---|
+| `VIOLENT` | `violent` |
+| `SEXUAL` | `sexual` |
+| `SPAM` | `spam` |
+| `FRAUD` | `fraud` |
+| `ILLEGAL` | `illegal` |
+| `PRIVACY` | `privacy` |
+| `SUICIDE` | `suicide` |
+| `ETC` | `etc` |
+| **`RIGHT`** | **`right_infringement`** |
+| **`PROTECTCHILD`** | **`protect_child`** |
+| **`ILLEGAL_FILMING`** | **`illegal_filming`** |
+| **`YOUTH_UNSUITABLE`** | **`youth_unsuitable`** |
+
+**결과**: 서버는 `http=200/status=0` 로 받되 **unknown category** 로 분류 → 심사 큐 drop. 라이브 로그 72건 전부 status=0 인데 처분 없었던 **근본 원인 확정**.
+
+**봇 반영 (rp-v59)**:
+- `CATEGORIES` 배열 전부 소문자 snake_case
+- `normalizeCategory()` 함수 — 대문자 입력도 자동 변환 (호환성)
+- UI select 옵션 소문자
+- `buildBody` / `buildLinkBody` 가 전부 normalize 통과
+
+**바디 바이트 검증**:
+```
+VIOLENT → {"category":"violent",...}
+RIGHT → {"category":"right_infringement",...}
+PROTECTCHILD → {"category":"protect_child",...}
+```
+
+### 2026-11-15 8차 — 그 외 발견
+
+**vbc0 Retrofit 7개 메서드 전체**:
+| 메서드 | 경로 | 바디 |
+|---|---|---|
+| b | `c/fraud/report/chatLogs` | ChatLogsReportParams (쓰는 중) |
+| g | `c/fraud/report/link` | OpenLinkReportParams (쓰는 중, /link 섹션) |
+| f | `c/fraud/report/profilePost` | OpenProfilePostReportIllegalFilmingParams (미사용) |
+| a | `profile/{linkId}/posts/{postId}/report` | — (미사용) |
+| c/d/e | `c/voiceroom/fraud/report{Recording,Title,Description}` | VoiceroomReportParams (범위 밖) |
+
+**추가로 발견된 신고 엔드포인트 — 봇 전부 미사용**:
+- `talk/profile25/report/{abuseType}` — **프로필(사람) 자체 신고. "다른 정지툴" 유력 경로**. `ProfileAbuseReportApiParams`
+- `talk/profile25/report/post/{abuseType}` — 포스트 신고
+- `talk/profiles/{profileId}/report/right` — 권리침해
+- `talk/profiles/{profileId}/report/snapshot` — 스냅샷
+- `talk/profiles/{profileId}/report/illegalFilming` — 불법촬영물
+- `talk/report/signed_url` — 신고 첨부파일 업로드
+
+**chatLogs 응답 숨은 필드**: `ReportResponse = {status:Long, url:String}` — 봇은 `url` 무시 중. url 의 역할 확정 안 됨.
+
+**chatLogInfos 조립 숨은 필드**:
+- primary: `u, m, s, t, l, scope, threadId` (봇 일치)
+- `m`: `message, attachment, referer, revision` (봇 일치)
+- **`enc`**: attachment JSON 내 조건부. 봇은 attachment 재조립 안 함 → 첨부 있는 홍보 메시지 신고 시 원본과 불일치
+
+**Header interceptor 완전 dump**: 봇이 보내는 5개 (A/Authorization/C/Accept-Language/User-Agent) 가 전부. 추가 signature/HMAC 없음.
+
+**WRITE 조작 불가능**: LOCO WRITE 는 세션 oauth+duuid 로 AES-GCM. 서버가 토큰에서 authorId 추출.
+
 ### ★★★ 2026-11-15 7차 확정 — KICKMEM 은 호스트 전용, 일반 멤버 봇에겐 서버 레벨 효과 0 ★★★
 
 **봇 라이브 결과로 4차·6차 가정 깨짐**:

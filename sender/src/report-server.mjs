@@ -256,13 +256,13 @@ async function handle(req, res) {
   }
   if (p === '/report/openchat-one' && req.method === 'POST') {
     const b = await readBody(req)
-    const r = await queue(function () { return OPEN.reportOne(b.ctx || b, String(b.category || 'SPAM')) })
+    const r = await queue(function () { return OPEN.reportOne(b.ctx || b, String(b.category || 'spam')) })
     return send(res, 200, r)
   }
   // "차단하고 신고하기" — Report POST + KICKMEM LOCO 체인
   if (p === '/report/openchat-report-block' && req.method === 'POST') {
     const b = await readBody(req)
-    const r = await queue(function () { return OPEN.reportAndBlock(b.ctx || b, String(b.category || 'VIOLENT')) })
+    const r = await queue(function () { return OPEN.reportAndBlock(b.ctx || b, String(b.category || 'violent')) })
     return send(res, 200, r)
   }
   // 프로필(=openlink 자체) 신고 — /c/fraud/report/link. chatId/userId 안 쓰고 linkId 만 필요.
@@ -271,7 +271,7 @@ async function handle(req, res) {
     const b = await readBody(req)
     const linkId = String(b.linkId || (b.ctx && b.ctx.linkId) || '')
     if (!linkId) return send(res, 400, { ok: false, text: 'linkId 필요' })
-    const r = await queue(function () { return OPEN.reportLink(linkId, String(b.category || 'VIOLENT')) })
+    const r = await queue(function () { return OPEN.reportLink(linkId, String(b.category || 'violent')) })
     return send(res, 200, r)
   }
   if (p === '/report/openchat-report-link-block' && req.method === 'POST') {
@@ -280,7 +280,7 @@ async function handle(req, res) {
     const chatId = String(b.chatId || (b.ctx && b.ctx.chatId) || '')
     const targetUserId = String(b.targetUserId || (b.ctx && b.ctx.authorId) || '')
     if (!linkId) return send(res, 400, { ok: false, text: 'linkId 필요' })
-    const r = await queue(function () { return OPEN.reportLinkAndBlock({ linkId, chatId, targetUserId }, String(b.category || 'VIOLENT')) })
+    const r = await queue(function () { return OPEN.reportLinkAndBlock({ linkId, chatId, targetUserId }, String(b.category || 'violent')) })
     return send(res, 200, r)
   }
   if (p === '/report/openchat-fanout-link' && req.method === 'POST') {
@@ -295,7 +295,7 @@ async function handle(req, res) {
     const shuffle = b.shuffle !== false
     const postBlock = !!b.postBlock
     const r = await queue(function () {
-      return OPEN.fanoutLink({ linkId, chatId, targetUserId }, String(b.category || 'VIOLENT'), userIds, { gapMs, jitterMs, shuffle, postBlock })
+      return OPEN.fanoutLink({ linkId, chatId, targetUserId }, String(b.category || 'violent'), userIds, { gapMs, jitterMs, shuffle, postBlock })
     })
     return send(res, 200, r)
   }
@@ -303,7 +303,7 @@ async function handle(req, res) {
     // 실제 발사 X — 봇이 보낼 바이트 전체를 frida 포맷으로 돌려줌. 앱 캡쳐와 바이트 단위 diff 용.
     const b = await readBody(req)
     try {
-      const r = OPEN.dumpRequest(b.ctx || b, String(b.category || 'VIOLENT'))
+      const r = OPEN.dumpRequest(b.ctx || b, String(b.category || 'violent'))
       return send(res, 200, r)
     } catch (e) {
       return send(res, 200, { ok: false, error: String(e && e.message ? e.message : e) })
@@ -317,7 +317,7 @@ async function handle(req, res) {
     const shuffle = b.shuffle !== false
     const postBlock = !!b.postBlock
     const r = await queue(function () {
-      return OPEN.fanout(b.ctx || b, String(b.category || 'VIOLENT'), userIds, { gapMs, jitterMs, shuffle, postBlock })
+      return OPEN.fanout(b.ctx || b, String(b.category || 'violent'), userIds, { gapMs, jitterMs, shuffle, postBlock })
     })
     return send(res, 200, r)
   }
@@ -431,7 +431,7 @@ async function handle(req, res) {
     // watch.autoFire 는 linkId 만 있으면 작동. injectText 는 enableInject=true 로 명시해야 사용.
     const autoFire = b.autoFire && b.autoFire.linkId ? {
       linkId: String(b.autoFire.linkId),
-      category: String(b.autoFire.category || 'VIOLENT'),
+      category: String(b.autoFire.category || 'violent'),
       gapMs: Number(b.autoFire.gapMs) >= 0 ? Number(b.autoFire.gapMs) : 2500,
       jitterMs: Number(b.autoFire.jitterMs) >= 0 ? Number(b.autoFire.jitterMs) : 1500,
       enableInject: b.autoFire.enableInject === true,
