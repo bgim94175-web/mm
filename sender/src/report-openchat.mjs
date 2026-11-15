@@ -11,6 +11,10 @@ import * as LOCO from './report-loco.mjs'
 
 export const HOST = 'https://open.kakao.com'
 export const PATH = '/c/fraud/report/chatLogs'
+// ★ 프로필(=오픈링크 자체) 신고 — "차단하고 신고하기" 상대 프로필 플로우 (APK 5차 확정).
+// vbc0.g · OpenLinkReportParams { category:String, linkId:Long, attachmentPaths:List<String>? }
+// chatId/userId 안 보냄 → LOGINLIST partial snapshot 상태에서도 linkId 만 알면 바로 발사.
+export const PATH_LINK = '/c/fraud/report/link'
 
 export const CATEGORIES = [
   'SEXUAL', 'RIGHT', 'ILLEGAL_FILMING', 'FRAUD', 'SPAM', 'SUICIDE',
@@ -168,14 +172,14 @@ export function dumpRequest(ctx, category, opts = {}) {
   }
 }
 
-async function hit(body, { timeoutMs = 8000, host = HOST, cred, retries = 1, includeApkHeaders = false } = {}) {
+async function hit(body, { timeoutMs = 8000, host = HOST, path = PATH, cred, retries = 1, includeApkHeaders = false } = {}) {
   let last = null
   for (let attempt = 0; attempt <= retries; attempt++) {
     const ctrl = new AbortController()
     const t = setTimeout(() => ctrl.abort(), timeoutMs)
     const payload = body && typeof body._raw === 'string' ? body._raw : JSON.stringify(body)
     try {
-      const r = await fetch(host + PATH, {
+      const r = await fetch(host + path, {
         method: 'POST',
         headers: authHeader(cred, { includeApkHeaders }),
         body: payload,
@@ -249,6 +253,130 @@ export async function reportAndBlock(ctx, category, opts = {}) {
     result.msg = rep.msg + ' / KICKMEM ERR ' + result.block.error.slice(0, 80)
   }
   return result
+}
+
+// ★ 프로필(=오픈링크 자체) 신고 — /c/fraud/report/link (APK 5차 확정).
+// 바디 3필드: category · linkId · attachmentPaths?. chatId/userId 안 보냄.
+// LOGINLIST partial snapshot 상황에서도 linkId 만 알면 바로 작동. 서버가 chatLogs 와
+// 별도 심사 큐 쓸 가능성 매우 큼 — silent-accept 돌파 결정적 후보.
+export function buildLinkBody(linkId, category, attachmentPaths) {
+  const linkStr = longStr(linkId)
+  const cat = jsonEscape(String(category || PROFANITY_CATEGORY))
+  // kotlinx-serialization 선언 순서: category → linkId → attachmentPaths
+  // attachmentPaths 는 nullable — 비어있을 때 생략 (public 신고는 첨부 없음)
+  let raw
+  if (Array.isArray(attachmentPaths) && attachmentPaths.length) {
+    const arr = attachmentPaths.map((p) => '"' + jsonEscape(String(p)) + '"').join(',')
+    raw = '{"category":"' + cat + '","linkId":' + linkStr + ',"attachmentPaths":[' + arr + ']}'
+  } else {
+    raw = '{"category":"' + cat + '","linkId":' + linkStr + '}'
+  }
+  return { _raw: raw }
+}
+
+export async function reportLink(linkId, category, opts = {}) {
+  if (!linkId) return { ok: false, text: 'linkId 필요' }
+  const body = buildLinkBody(linkId, category, opts.attachmentPaths)
+  const includeApkHeaders = opts.includeApkHeaders === false ? false : true
+  const r = await hit(body, {
+    cred: opts.cred,
+    path: PATH_LINK,
+    retries: opts.retries != null ? opts.retries : 1,
+    includeApkHeaders,
+  })
+  const ok = r.httpCode === 200 && r.status === 0
+  return {
+    ok, category, path: PATH_LINK, sent: r.sent, http: r.httpCode, status: r.status,
+    respBody: r.body, respHeaders: r.headers, text: r.text, attempt: r.attempt,
+    msg: (ok ? '★ 프로필접수' : '실패') + ' category=' + category + ' linkId=' + linkId
+      + ' http=' + r.httpCode + ' status=' + r.status
+      + (r.err ? ' err=' + r.err : '') + (r.attempt ? ' (재시도#' + r.attempt + ')' : ''),
+  }
+}
+
+// 프로필 신고 + KICKMEM 체인 (반드시 chatId/targetUserId 필요 — KICKMEM 용).
+// linkId 만 있어도 Report 는 되지만 차단은 chatId/mid 필요.
+export async function reportLinkAndBlock({ linkId, chatId, targetUserId }, category, opts = {}) {
+  const rep = await reportLink(linkId, category, opts)
+  const result = { ok: rep.ok, report: rep, block: null, msg: rep.msg }
+  if (!rep.ok) { result.msg = '(Report 실패 — KICKMEM 건너뜀) ' + rep.msg; return result }
+  if (!chatId || !targetUserId) {
+    result.block = { ok: false, skipped: true, reason: 'chatId/targetUserId 없음 (KICKMEM 생략)' }
+    return result
+  }
+  if (!LOCO.ready()) {
+    result.block = { ok: false, skipped: true, reason: 'LOCO 세션 없음' }
+    result.msg = rep.msg + ' / KICKMEM skip: LOCO 연결 없음'
+    return result
+  }
+  try {
+    const r = await LOCO.kickMem(linkId, chatId, targetUserId, true)
+    const bs = r && r.body && typeof r.body.status === 'number' ? r.body.status : null
+    const ok = r && r.statusCode === 0 && (bs === 0 || bs == null)
+    result.block = { ok, statusCode: r && r.statusCode, status: bs, body: r && r.body }
+    result.msg = rep.msg + ' / KICKMEM ' + (ok ? '★차단OK' : '실패 st=' + (r && r.statusCode) + ' b=' + bs)
+    result.ok = rep.ok && ok
+  } catch (e) {
+    result.block = { ok: false, error: String(e && e.message ? e.message : e) }
+    result.msg = rep.msg + ' / KICKMEM ERR ' + result.block.error.slice(0, 80)
+  }
+  return result
+}
+
+// 활성 계정 전부로 /link 발사 (fanout). 필요 param = linkId. chatId/targetUserId 는 postBlock 때만 필요.
+export async function fanoutLink({ linkId, chatId, targetUserId }, category, userIds, { gapMs = 2500, jitterMs = 1500, shuffle = true, postBlock = false } = {}) {
+  if (!linkId) return { ok: false, text: 'linkId 필요' }
+  const cat = category || PROFANITY_CATEGORY
+  const all = await DB.listAccounts()
+  const active = all.filter((a) => a.active !== false && a.oauthToken && a.duuid)
+  let list = userIds && userIds.length ? active.filter((a) => userIds.map(String).includes(String(a.userId))) : active.slice()
+  if (!list.length) return { ok: false, text: '발사 가능한 활성 계정이 없음' }
+  if (shuffle) {
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[list[i], list[j]] = [list[j], list[i]]
+    }
+  }
+  const rows = []
+  let accepted = 0
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i]
+    const r = await reportLink(linkId, cat, { cred: a }).catch((e) => ({ ok: false, http: 0, status: null, err: String(e && e.message ? e.message : e) }))
+    const status = r.status != null ? r.status : (r.err ? 'err' : '-')
+    try { await DB.markAccountUsed(a.userId, 'link http=' + r.http + ' status=' + status) } catch (e) {}
+    rows.push({
+      userId: a.userId,
+      email: String(a.email || '').replace(/^(.).*(@.*)$/, '$1***$2'),
+      ok: !!r.ok, http: r.http, status: r.status, err: r.err || null,
+      msg: (r.ok ? '★' : '·') + ' ' + a.userId + ' http=' + r.http + ' status=' + status,
+    })
+    if (r.ok) accepted++
+    if (i + 1 < list.length) await sleep(gapMs + Math.floor(Math.random() * (jitterMs || 0)))
+  }
+  // postBlock: primary LOCO 가 열려있고 chatId/targetUserId 알려져 있으면 KICKMEM 1회
+  let postBlockResult = null
+  if (postBlock) {
+    if (!chatId || !targetUserId) {
+      postBlockResult = { ok: false, skipped: true, reason: 'chatId/targetUserId 없음' }
+    } else if (!LOCO.ready()) {
+      postBlockResult = { ok: false, skipped: true, reason: 'LOCO 세션 없음' }
+    } else {
+      try {
+        const r = await LOCO.kickMem(linkId, chatId, targetUserId, true)
+        const bs = r && r.body && typeof r.body.status === 'number' ? r.body.status : null
+        postBlockResult = { ok: r && r.statusCode === 0 && (bs === 0 || bs == null), statusCode: r && r.statusCode, status: bs }
+      } catch (e) {
+        postBlockResult = { ok: false, error: String(e && e.message ? e.message : e) }
+      }
+    }
+  }
+  const postBlockLine = postBlockResult
+    ? '\nKICKMEM(차단) ' + (postBlockResult.ok ? '★성공' : postBlockResult.skipped ? 'skip: ' + postBlockResult.reason : '실패 ' + (postBlockResult.error || 'st=' + postBlockResult.statusCode + ' b=' + postBlockResult.status))
+    : ''
+  return {
+    ok: accepted > 0, accepted, total: list.length, rows, gapMs, jitterMs, shuffled: shuffle, postBlock: postBlockResult,
+    text: '프로필 fanout 접수 ' + accepted + '/' + list.length + ' category=' + cat + ' linkId=' + linkId + '\n' + rows.map((x) => x.msg).join('\n') + postBlockLine,
+  }
 }
 
 export async function fireAll(ctx) {

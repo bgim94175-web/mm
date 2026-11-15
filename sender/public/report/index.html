@@ -214,6 +214,23 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <button onclick="ocOne()">단일 계정 Report 만 (primary · 진단용)</button>
     <button class="p" onclick="ocReportBlock()" style="background:#c0392b">🚫 차단하고 신고 (primary · Report+KICKMEM)</button>
   </div>
+
+  <div style="margin-top:14px;padding:12px;border:1px solid #e67e22;border-radius:12px;background:#2a1a0a">
+    <div style="color:#fc9;font-weight:600;margin-bottom:6px">📱 프로필 신고 (/c/fraud/report/link) — <b>silent-accept 돌파 최유력 후보</b></div>
+    <div class="me" style="color:#fc9;margin-bottom:8px">
+      APK 5차 분석 결과: 메시지 신고(/chatLogs) 와 <b>완전히 다른 엔드포인트·심사 큐</b>.
+      바디는 <code>{category, linkId}</code> 2필드만 (chatId/userId 불필요). 상대 프로필 자체를 신고.
+      사용자 제보 "다른 정지툴의 '차단하고 신고하기'" 가 이 플로우.
+    </div>
+    <label>linkId <span class="me" style="font-weight:normal">(방 pick 되어 있으면 자동 채워짐 · 수동 입력도 가능)</span></label>
+    <input id="plinkId" inputmode="numeric" placeholder="예: 478877695">
+    <div class="row" style="margin-top:8px">
+      <button class="p" onclick="pLinkOne()">프로필 신고 1회 (primary)</button>
+      <button class="p" onclick="pLinkFanout()" style="background:#e67e22">🔥 프로필 신고 fanout (활성 계정 전부)</button>
+    </div>
+    <div class="me" style="margin-top:6px;color:#aba">⤷ "완료 후 차단 추가" 체크 켜 두면 primary 로 KICKMEM 1회 추가 (chatId/authorId 알려져 있을 때만).</div>
+  </div>
+
   <div class="row" style="margin-top:8px"><button onclick="uVerdict()">u 판정 — 작성자(a)/대상(b)/없는번호(c) 3연발</button></div>
   <div class="row" style="margin-top:6px"><button onclick="ocMessageVerdict()" style="background:#5c1a3a;color:#fcc">📝 조작 반영 판정 — 서버가 조작 문장을 실제로 쓰는지 확인</button></div>
   <div class="row" style="margin-top:6px"><button onclick="ocDedupeVerdict()" style="background:#1a5c3a;color:#cfc">♻️ 1계정 1신고 확인 — 같은 (reporter, logId) 2연발</button></div>
@@ -495,7 +512,9 @@ async function pickRoom(chatId, linkId) {
   pickedRoom = { chatId, linkId, label: rm ? (rm.typeName + ' · ' + (rm.members || '(이름없음)')) : chatId }
   pickedCtx = { chatId, linkId }
   onlyAuthor = null
-  $('c').value = chatId; save()
+  $('c').value = chatId
+  if (linkId && $('plinkId')) $('plinkId').value = linkId   // 프로필 신고 linkId 자동 세팅
+  save()
   $('pickedRoomBox').classList.remove('hide')
   $('pickedRoomName').textContent = pickedRoom.label
   $('memList').classList.add('hide'); $('memList').innerHTML = ''
@@ -936,6 +955,42 @@ async function ocFanout() {
     $('out').textContent = (j.text || '') + '\n\n' + JSON.stringify(j, null, 1)
   } catch (e) { $('out').textContent = '실패: ' + e.message }
   await refreshAccounts()  // last_used/last_status 갱신
+}
+
+// 프로필 신고 (/c/fraud/report/link) — primary 1회
+async function pLinkOne() {
+  save()
+  const linkId = ($('plinkId').value || '').trim() || (pickedCtx && pickedCtx.linkId) || ''
+  if (!linkId) { $('out').textContent = 'linkId 필요 (방 pick 시 자동 채워짐 또는 수동 입력)'; return }
+  const category = ($('ocCat').value || 'VIOLENT').trim().toUpperCase()
+  $('out').textContent = '📱 프로필 신고 (' + category + ', linkId=' + linkId + ') …'
+  try {
+    const j = await post('/report/openchat-report-link', { linkId, category })
+    $('out').textContent = (j.msg || '') + '\n\n' + JSON.stringify(j, null, 1)
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
+}
+// 프로필 신고 fanout — 모든 활성 계정이 /link POST. postBlock 체크 시 primary KICKMEM 1회
+async function pLinkFanout() {
+  save()
+  const linkId = ($('plinkId').value || '').trim() || (pickedCtx && pickedCtx.linkId) || ''
+  if (!linkId) { $('out').textContent = 'linkId 필요'; return }
+  const category = ($('ocCat').value || 'VIOLENT').trim().toUpperCase()
+  const chatId = (pickedCtx && pickedCtx.chatId) || ''
+  const targetUserId = (pickedCtx && pickedCtx.authorId) || ''
+  const active = (window.__accounts || []).filter((a) => a.active)
+  if (!active.length) { $('out').textContent = '활성 계정 없음'; return }
+  const userIds = active.map((a) => a.userId)
+  const gapMs = Math.max(0, parseInt($('ocFanoutGapMs').value, 10) || 2500)
+  const jitterMs = Math.max(0, parseInt($('ocFanoutJitterMs').value, 10) || 1500)
+  const shuffle = $('ocFanoutShuffle').checked
+  const postBlock = !!($('ocPostBlock') && $('ocPostBlock').checked)
+  const expected = Math.round((active.length - 1) * (gapMs + jitterMs / 2) / 1000)
+  $('out').textContent = '🔥 프로필 fanout 발사… ' + active.length + ' 계정 · ' + category + ' · linkId=' + linkId + ' · ~' + expected + 's'
+  try {
+    const j = await post('/report/openchat-fanout-link', { linkId, chatId, targetUserId, category, userIds, gapMs, jitterMs, shuffle, postBlock })
+    $('out').textContent = (j.text || '') + '\n\n' + JSON.stringify(j, null, 1)
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
+  await refreshAccounts()
 }
 
 // "차단하고 신고하기" primary 1회 — Report POST + KICKMEM LOCO

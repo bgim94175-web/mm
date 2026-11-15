@@ -97,6 +97,44 @@ yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), r
   b) 계정별 간격·지터 충분해서 어뷰징 필터 안 걸리게
   c) 메시지 원문 보존 (injectText 는 opt-in, 이미 rp-v44 에서 처리)
 
+### ★★★ 2026-11-15 프로필 신고 플로우 확정 — silent-accept 돌파 최유력 경로 (5차 분석) ★★★
+
+사용자 2차 수정 제보: "**차단하고 신고하기** 는 메시지 신고가 아니라 **상대방 프로필**에 들어가서 하는 메뉴". APK 재분석 결과:
+
+**UI 트리거**: 오픈채팅 멤버 프로필 (상대 사진/닉네임) → "신고" 메뉴. `AbuseReportViewModel.W4(kg61)` → `K5` dispatcher → `se$z.invokeSuspend` 타입 분기 → `D5(OlkLinkAbuseReportApiParams)`.
+
+**엔드포인트**: **`POST /c/fraud/report/link`** (`vbc0.g`, Retrofit)
+
+**바디 클래스 `OpenLinkReportParams` — 3필드 확정** (kotlinx-serialization):
+| 키 | 타입 | 비고 |
+|---|---|---|
+| `category` | String | `chatLogs` 와 같은 enum (`VIOLENT`, `SPAM`, ...) |
+| `linkId` | Long | 오픈링크 ID |
+| `attachmentPaths` | `List<String>?` | **nullable**. 첨부파일 경로. 일반 신고에선 null/생략 |
+
+**`chatLogs` 와 결정적 차이**:
+| 엔드포인트 | 필드 | 의미 | 봇 관점 |
+|---|---|---|---|
+| `/chatLogs` | `category, linkId, chatId, chatLogInfos(JSON)` 4필드 | 특정 메시지(들) 신고 | chatId + 메시지 전체 필요 |
+| **`/link`** | `category, linkId, attachmentPaths?` 3필드 | **openlink/프로필 자체 신고** | **linkId 만 있으면 발사 가능** |
+
+**AfterAction 체인** (신고 후 자동): `y4` bridge 가 `ReportData.a() = AbuseReportAfterAction` + `rg61.hasAfterAction()` 체크 → 차단 체크된 경우 **LOCO `KICKMEM` {li, c, mid, r:true}** (4차 확정 — 동일 메서드) 호출.
+
+**`profilePost`** (`vbc0.b`): 별개 — 오픈프로필 **포스트(게시글)** 신고 전용. `OpenProfilePostReportIllegalFilmingParams` 바디, 불법촬영물 신고 포함. 이번 봇 범위 밖.
+
+**결정적 결론**:
+- 지금까지 봇은 `/chatLogs` 만. 라이브 로그 보니 72건 접수 후에도 처분 안 걸림 = **silent-accept 폐기 패턴**
+- 사용자 제보 "다른 정지툴은 차단하고 신고하기로 먹힘" = 이 플로우가 **chatLogs 가 아니라 /link** 라는 뜻
+- **/link 는 chatId 없이 linkId 만** → LOGINLIST partial snapshot 상태에서도 바로 쏠 수 있음
+- 서버가 "프로필 차원의 신고" 를 **별도 심사 큐 + 다른 임계** 로 처리할 가능성 매우 큼 (chatLogs 는 "이 메시지 하나" 수준의 가중치, /link 는 "이 사용자/방 전체" 수준)
+
+**봇 반영** (rp-v52 이후):
+- `report-openchat.mjs::reportLink(linkId, category)` — /link POST 단독
+- `report-openchat.mjs::reportLinkAndBlock({linkId, chatId, targetUserId}, category)` — /link + KICKMEM
+- `report-openchat.mjs::fanoutLink({linkId, chatId, targetUserId}, category, userIds, {postBlock})` — 활성 계정 전부 /link POST + 끝에 primary KICKMEM
+- 라우트 `/report/openchat-report-link`, `/openchat-report-link-block`, `/openchat-fanout-link`
+- UI "📱 프로필 신고" 섹션 — primary 1회 버튼 + 🔥 fanout 버튼. 방 pick 하면 linkId 자동 세팅.
+
 ### ★★★ 2026-11-15 "차단하고 신고하기" 전체 콜체인 확정 (3·4차 분석) ★★★
 
 사용자 제보 "다른 정지툴은 '차단하고 신고하기' 로 먹힌다" → APK 심층 분석 결과:

@@ -237,6 +237,40 @@ async function handle(req, res) {
     const r = await queue(function () { return OPEN.reportAndBlock(b.ctx || b, String(b.category || 'VIOLENT')) })
     return send(res, 200, r)
   }
+  // 프로필(=openlink 자체) 신고 — /c/fraud/report/link. chatId/userId 안 쓰고 linkId 만 필요.
+  // 라이브 로그가 보여준 "chatLogs silent-accept" 를 우회할 결정적 후보 (APK 5차 확정).
+  if (p === '/report/openchat-report-link' && req.method === 'POST') {
+    const b = await readBody(req)
+    const linkId = String(b.linkId || (b.ctx && b.ctx.linkId) || '')
+    if (!linkId) return send(res, 400, { ok: false, text: 'linkId 필요' })
+    const r = await queue(function () { return OPEN.reportLink(linkId, String(b.category || 'VIOLENT')) })
+    return send(res, 200, r)
+  }
+  if (p === '/report/openchat-report-link-block' && req.method === 'POST') {
+    const b = await readBody(req)
+    const linkId = String(b.linkId || (b.ctx && b.ctx.linkId) || '')
+    const chatId = String(b.chatId || (b.ctx && b.ctx.chatId) || '')
+    const targetUserId = String(b.targetUserId || (b.ctx && b.ctx.authorId) || '')
+    if (!linkId) return send(res, 400, { ok: false, text: 'linkId 필요' })
+    const r = await queue(function () { return OPEN.reportLinkAndBlock({ linkId, chatId, targetUserId }, String(b.category || 'VIOLENT')) })
+    return send(res, 200, r)
+  }
+  if (p === '/report/openchat-fanout-link' && req.method === 'POST') {
+    const b = await readBody(req)
+    const linkId = String(b.linkId || (b.ctx && b.ctx.linkId) || '')
+    const chatId = String(b.chatId || (b.ctx && b.ctx.chatId) || '')
+    const targetUserId = String(b.targetUserId || (b.ctx && b.ctx.authorId) || '')
+    if (!linkId) return send(res, 400, { ok: false, text: 'linkId 필요' })
+    const userIds = Array.isArray(b.userIds) ? b.userIds.map(String) : []
+    const gapMs = Number(b.gapMs) >= 0 ? Number(b.gapMs) : 2500
+    const jitterMs = Number(b.jitterMs) >= 0 ? Number(b.jitterMs) : 1500
+    const shuffle = b.shuffle !== false
+    const postBlock = !!b.postBlock
+    const r = await queue(function () {
+      return OPEN.fanoutLink({ linkId, chatId, targetUserId }, String(b.category || 'VIOLENT'), userIds, { gapMs, jitterMs, shuffle, postBlock })
+    })
+    return send(res, 200, r)
+  }
   if (p === '/report/openchat-dump' && req.method === 'POST') {
     // 실제 발사 X — 봇이 보낼 바이트 전체를 frida 포맷으로 돌려줌. 앱 캡쳐와 바이트 단위 diff 용.
     const b = await readBody(req)
