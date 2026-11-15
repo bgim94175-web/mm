@@ -220,6 +220,16 @@ async function handle(req, res) {
     const r = await queue(function () { return OPEN.reportOne(b.ctx || b, String(b.category || 'SPAM')) })
     return send(res, 200, r)
   }
+  if (p === '/report/openchat-dump' && req.method === 'POST') {
+    // 실제 발사 X — 봇이 보낼 바이트 전체를 frida 포맷으로 돌려줌. 앱 캡쳐와 바이트 단위 diff 용.
+    const b = await readBody(req)
+    try {
+      const r = OPEN.dumpRequest(b.ctx || b, String(b.category || 'VIOLENT'))
+      return send(res, 200, r)
+    } catch (e) {
+      return send(res, 200, { ok: false, error: String(e && e.message ? e.message : e) })
+    }
+  }
   if (p === '/report/openchat-fanout' && req.method === 'POST') {
     const b = await readBody(req)
     const userIds = Array.isArray(b.userIds) ? b.userIds.map(String) : []

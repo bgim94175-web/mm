@@ -206,6 +206,23 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   <div class="row" style="margin-top:6px"><button onclick="ocMessageVerdict()" style="background:#5c1a3a;color:#fcc">📝 조작 반영 판정 — 서버가 조작 문장을 실제로 쓰는지 확인</button></div>
   <div class="row" style="margin-top:6px"><button onclick="ocDedupeVerdict()" style="background:#1a5c3a;color:#cfc">♻️ 1계정 1신고 확인 — 같은 (reporter, logId) 2연발</button></div>
 
+  <div style="margin-top:14px;padding:12px;border:1px solid #3b6ef5;border-radius:12px;background:#0e1a2d">
+    <div style="color:#9cf;font-weight:600;margin-bottom:6px">🧪 앱 ↔ 봇 바이트 비교 (위조 작동 검증)</div>
+    <div class="me" style="color:#9cf;margin-bottom:8px">
+      <b>목적:</b> "원문 위조가 서버에 실제로 반영되는지" 를 바이트 레벨 diff 로 확인.<br>
+      <b>봇 쪽:</b> 아래 버튼 — 실제 발사 안 함. 보낼 바이트 전체(URL·헤더·바디·hex) 를 뽑음.<br>
+      <b>앱 쪽:</b> <code style="background:#111;padding:2px 5px;border-radius:4px">tools/frida/android-openchat-http-capture.js</code>
+      — 안드로이드 (루팅/Magisk) + <code>frida-server</code> → <br>
+      &nbsp;&nbsp;<code style="background:#111;padding:2px 5px;border-radius:4px">frida -U -n com.kakao.talk -l 위 스크립트</code> → 앱에서 "신고하고 나가기" 1회.<br>
+      <b>비교:</b> 양쪽 출력 포맷 동일. headers·body·hex 를 쭉 훑어서 다른 바이트 있는지 확인.<br>
+      → 바이트 같으면 위조 자체는 성공(= 서버가 심사자료로 조작문 받음), 서버 cross-check 가 원인.<br>
+      → 바이트 다르면 그 필드가 결정적.
+    </div>
+    <div class="row">
+      <button onclick="ocDump()" style="background:#3b6ef5">봇 요청 바이트 덤프 (앱과 비교용)</button>
+    </div>
+  </div>
+
   <h2 style="margin-top:14px">🔍 처분 감지 (대상 상태 모니터)</h2>
   <div class="me" style="margin-bottom:6px">대상 유저가 이용제한 먹었는지 자동 감지. "쐈다"를 넘어서 "걸렸다"를 확인하는 센서.</div>
   <div class="row">
@@ -972,6 +989,26 @@ async function dump() {
     const j = await post('/report/msg-dump', pickedCtx)
     if (!j.ok) { $('out').textContent = j.text || '실패'; return }
     $('out').textContent = '바이트 ' + j.byteLen + 'B · BSON hex:\n\n' + j.pretty + '\n\n' + j.hint
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
+}
+// ★ 앱 캡쳐와 바이트 비교용. 실제 발사 안 함. frida android-openchat-http-capture.js 출력과 동일 포맷.
+async function ocDump() {
+  if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
+  const category = ($('ocCat').value || 'VIOLENT').trim().toUpperCase()
+  const ctx = ctxWithInject()
+  $('out').textContent = '덤프 중 (발사 X)…'
+  try {
+    const j = await post('/report/openchat-dump', { ctx, category })
+    if (!j.ok) { $('out').textContent = j.error || '실패'; return }
+    const injectNote = ctx.enableInject ? '[조작문 활성 — m.message 가 조작문으로 치환됨]' : '[원문 그대로]'
+    const tip = '\n\n[비교 가이드]\n'
+      + '1) 안드로이드 (root/Magisk) + frida-server 준비\n'
+      + '2) frida -U -n com.kakao.talk -l tools/frida/android-openchat-http-capture.js\n'
+      + '3) 앱에서 같은 메시지 "신고하고 나가기" 1회\n'
+      + '4) frida 출력과 위 봇 출력을 비교 — headers·body·hex 를 쭉 훑기\n'
+      + '   • 바이트 같으면: 위조 자체는 성공. 서버가 silent-reject 중 (cross-check 유력)\n'
+      + '   • 다른 바이트: 그 필드가 결정적 — 주로 header 순서·누락 헤더·User-Agent 세부 차이'
+    $('out').textContent = injectNote + '\n\n' + j.frida + tip
   } catch (e) { $('out').textContent = '실패: ' + e.message }
 }
 async function shape() {

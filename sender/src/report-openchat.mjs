@@ -133,6 +133,40 @@ export function buildBody(ctx, category) {
   }
 }
 
+// ★ 실제 전송 없이 "앱 신고 캡쳐와 바이트 비교" 용 덤프. frida 스크립트 출력 포맷과 동일.
+export function dumpRequest(ctx, category, opts = {}) {
+  const body = buildBody(ctx, category || PROFANITY_CATEGORY)
+  const payload = body._raw
+  const includeApkHeaders = opts.includeApkHeaders === false ? false : true
+  const headers = authHeader(opts.cred, { includeApkHeaders })
+  const url = HOST + PATH
+  const bodyBuf = Buffer.from(payload, 'utf8')
+  const hex = bodyBuf.toString('hex')
+  const lines = []
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+  lines.push('[BOT] POST ' + url)
+  const entries = Object.entries(headers)
+  lines.push('--- headers (' + entries.length + ') ---')
+  // frida OkHttp interceptor 체인 끝 출력 순서는 사실상 알파벳 (OkHttp Headers.Builder 내부 정렬 X — add 순서) 이라
+  // 완벽 매치는 어렵지만 "값" 자체는 1:1 비교 가능. 사람 눈 diff 쉽게 이름순 정렬.
+  entries.sort(([a], [b]) => a.localeCompare(b))
+  for (const [k, v] of entries) lines.push(k + ': ' + v)
+  lines.push('--- body (' + bodyBuf.length + ' bytes, content-type=application/json; charset=UTF-8) ---')
+  lines.push(payload)
+  lines.push('--- body hex (' + bodyBuf.length + ') ---')
+  lines.push(hex)
+  lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+  return {
+    ok: true,
+    url, method: 'POST',
+    headers,
+    body: payload,
+    bodyLen: bodyBuf.length,
+    bodyHex: hex,
+    frida: lines.join('\n'),
+  }
+}
+
 async function hit(body, { timeoutMs = 8000, host = HOST, cred, retries = 1, includeApkHeaders = false } = {}) {
   let last = null
   for (let attempt = 0; attempt <= retries; attempt++) {
