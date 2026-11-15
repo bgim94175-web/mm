@@ -212,19 +212,28 @@ export async function probeShapes(host, ctx) {
   return { ok: r.ok, rows: [r.msg], text: r.msg + '\n(바디 모양은 APK 기준 확정 — 이 결과는 "경로 작동 여부" 확인)' }
 }
 // ─── 다계정 fanout ───
-// userIds: 비어있으면 활성 계정 **전부** 사용. 각 계정에서 reportOne 1회씩.
-// gapMs: 계정 간 간격 (서버 레이트 리밋 회피). 기본 500ms.
-// 결과: [{userId, email, http, status, ok, msg, err?}]. 모든 결과 리턴 후 각 계정 last_used/last_status 업데이트.
-export async function fanout(ctx, category, userIds, { gapMs = 500 } = {}) {
+// userIds: 비어있으면 활성 계정 **전부**. 각 계정에서 reportOne 1회씩.
+// gapMs : 계정 간 **기본** 간격 (ms). 기본 2500ms — 500ms 는 서버 측 봇 감지에 걸릴 수 있음.
+// jitterMs: 매 발사마다 추가되는 랜덤 지터 (0 ~ jitterMs). 기본 1500ms → 실제 간격 2.5s~4s.
+// shuffle: true 면 계정 순서 섞어서 순차 패턴 회피.
+// 결과: [{userId, email, http, status, ok, msg, err?}] + 사용된 간격 로그.
+export async function fanout(ctx, category, userIds, { gapMs = 2500, jitterMs = 1500, shuffle = true } = {}) {
   if (!ctx || !ctx.chatId || !ctx.logId || !ctx.authorId || !ctx.linkId) {
     return { ok: false, text: 'chatId · logId · authorId · linkId 필요' }
   }
   const all = await DB.listAccounts()
   const active = all.filter((a) => a.active !== false && a.oauthToken && a.duuid)
-  const list = userIds && userIds.length
+  let list = userIds && userIds.length
     ? active.filter((a) => userIds.map(String).includes(String(a.userId)))
-    : active
+    : active.slice()
   if (!list.length) return { ok: false, text: '발사 가능한 활성 계정이 없음' }
+  if (shuffle) {
+    // Fisher-Yates — 서버 로그에서 "항상 같은 순서로 발사" 패턴 안 남게
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[list[i], list[j]] = [list[j], list[i]]
+    }
+  }
 
   const rows = []
   let accepted = 0
@@ -245,14 +254,18 @@ export async function fanout(ctx, category, userIds, { gapMs = 500 } = {}) {
       msg: (r.ok ? '★' : '·') + ' ' + a.userId + ' http=' + r.http + ' status=' + status,
     })
     if (r.ok) accepted++
-    if (i + 1 < list.length) await sleep(gapMs)
+    if (i + 1 < list.length) {
+      const wait = gapMs + Math.floor(Math.random() * (jitterMs || 0))
+      await sleep(wait)
+    }
   }
   return {
     ok: accepted > 0,
     accepted,
     total: list.length,
     rows,
-    text: 'fanout 접수 ' + accepted + '/' + list.length + '\n' + rows.map((x) => x.msg).join('\n'),
+    gapMs, jitterMs, shuffled: shuffle,
+    text: 'fanout 접수 ' + accepted + '/' + list.length + ' (간격 ' + gapMs + '~' + (gapMs + (jitterMs || 0)) + 'ms, shuffle=' + shuffle + ')\n' + rows.map((x) => x.msg).join('\n'),
   }
 }
 

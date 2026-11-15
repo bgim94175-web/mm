@@ -225,12 +225,16 @@ async function handle(req, res) {
     const r = await queue(function () { return OPEN.reportOne(b.ctx || b, String(b.category || 'SPAM')) })
     return send(res, 200, r)
   }
-  // 다계정 fanout — body { ctx, category, userIds?, gapMs? }
+  // 다계정 fanout — body { ctx, category, userIds?, gapMs?, jitterMs?, shuffle? }
   if (p === '/report/openchat-fanout' && req.method === 'POST') {
     const b = await readBody(req)
     const userIds = Array.isArray(b.userIds) ? b.userIds.map(String) : []
-    const gapMs = Number(b.gapMs) > 0 ? Number(b.gapMs) : 500
-    const r = await queue(function () { return OPEN.fanout(b.ctx || b, String(b.category || 'VIOLENT'), userIds, { gapMs }) })
+    const gapMs = Number(b.gapMs) >= 0 ? Number(b.gapMs) : 2500
+    const jitterMs = Number(b.jitterMs) >= 0 ? Number(b.jitterMs) : 1500
+    const shuffle = b.shuffle !== false
+    const r = await queue(function () {
+      return OPEN.fanout(b.ctx || b, String(b.category || 'VIOLENT'), userIds, { gapMs, jitterMs, shuffle })
+    })
     return send(res, 200, r)
   }
 

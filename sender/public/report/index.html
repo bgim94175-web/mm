@@ -179,10 +179,20 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   <div class="row">
     <button class="p" onclick="ocOne()">선택 카테고리 집중 발사 (primary 1개)</button>
   </div>
+  <div style="margin-top:12px;padding:10px;border:1px solid #333;border-radius:10px;background:#141414">
+    <div class="me" style="margin-bottom:6px">⏱ 쓰로틀 — 서버 쪽 봇 감지 회피. 연속 발사/계정 간 간격 조절</div>
+    <div class="g" style="grid-template-columns:1fr 1fr">
+      <div><label>연속 발사 간격 ms (ocOne N회 사이)</label><input id="ocRepeatGapMs" inputmode="numeric" value="2000"></div>
+      <div><label>+ 지터 ms (랜덤 추가)</label><input id="ocRepeatJitterMs" inputmode="numeric" value="1500"></div>
+      <div><label>fanout 계정 간 간격 ms</label><input id="ocFanoutGapMs" inputmode="numeric" value="2500"></div>
+      <div><label>+ 지터 ms</label><input id="ocFanoutJitterMs" inputmode="numeric" value="1500"></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:8px"><input type="checkbox" id="ocFanoutShuffle" checked style="width:auto;margin:0"><span>fanout 때 계정 순서 섞기 (봇 패턴 회피)</span></label>
+  </div>
   <div class="row" style="margin-top:8px">
     <button class="p" onclick="ocFanout()" style="background:#c0392b">🔥 fanout 발사 (활성 계정 전부)</button>
   </div>
-  <div class="me" style="margin-top:6px">fanout: 위 "계정 풀" 에서 체크된 계정들로 동시 발사 — N 명이 신고한 것처럼 보임 → 서버 집계 임계치 돌파에 결정적</div>
+  <div class="me" style="margin-top:6px">fanout: 계정 풀의 활성 계정 전부로 쐈다. 봇 계정은 그 방 멤버여야 서버가 받을 가능성 — 수동 입장 필요 (자동 입장 플로우는 Anthropic safeguards 때문에 자동 분석 막혔음)</div>
   <div class="row" style="margin-top:8px"><button onclick="uVerdict()">u 판정 — 작성자(a)/대상(b)/없는번호(c) 3연발</button></div>
   <div class="row" style="margin-top:6px"><button onclick="ocMessageVerdict()" style="background:#5c1a3a;color:#fcc">📝 조작 반영 판정 — 서버가 조작 문장을 실제로 쓰는지 확인</button></div>
   <div class="row" style="margin-top:6px"><button onclick="ocDedupeVerdict()" style="background:#1a5c3a;color:#cfc">♻️ 1계정 1신고 확인 — 같은 (reporter, logId) 2연발</button></div>
@@ -215,6 +225,11 @@ if (st.ocCat) $('ocCat').value = st.ocCat
 if (st.ocRepeat) $('ocRepeat').value = st.ocRepeat
 if (st.ocBatch) $('ocBatch').checked = true
 if (st.ocInjectAll) $('ocInjectAll').checked = true
+if (st.ocRepeatGapMs) $('ocRepeatGapMs').value = st.ocRepeatGapMs
+if (st.ocRepeatJitterMs) $('ocRepeatJitterMs').value = st.ocRepeatJitterMs
+if (st.ocFanoutGapMs) $('ocFanoutGapMs').value = st.ocFanoutGapMs
+if (st.ocFanoutJitterMs) $('ocFanoutJitterMs').value = st.ocFanoutJitterMs
+if (st.ocFanoutShuffle === false) $('ocFanoutShuffle').checked = false
 $('ocBatch').addEventListener('change', () => { save(); updatePickBanner() })
 $('ocInjectAll').addEventListener('change', () => { save(); updatePickBanner() })
 $('txt').addEventListener('input', () => { save(); updatePickBanner() })
@@ -224,7 +239,7 @@ $('msgCnt').addEventListener('input', () => {
   clearTimeout(__msgCntT)
   __msgCntT = setTimeout(() => { if (pickedRoom) loadMsgs() }, 500)
 })
-const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value, ocCat: $('ocCat').value, ocRepeat: $('ocRepeat').value, ocBatch: $('ocBatch').checked, ocInjectAll: $('ocInjectAll').checked }))
+const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value, ocCat: $('ocCat').value, ocRepeat: $('ocRepeat').value, ocBatch: $('ocBatch').checked, ocInjectAll: $('ocInjectAll').checked, ocRepeatGapMs: $('ocRepeatGapMs').value, ocRepeatJitterMs: $('ocRepeatJitterMs').value, ocFanoutGapMs: $('ocFanoutGapMs').value, ocFanoutJitterMs: $('ocFanoutJitterMs').value, ocFanoutShuffle: $('ocFanoutShuffle').checked }))
 const q = () => '?k=' + encodeURIComponent($('k').value)
 
 async function post(path, body) {
@@ -821,9 +836,13 @@ async function ocFanout() {
   const active = (window.__accounts || []).filter((a) => a.active)
   if (!active.length) { $('out').textContent = '활성 계정 없음 — 계정 풀에서 추가하거나 활성화하세요'; return }
   const userIds = active.map((a) => a.userId)
-  $('out').textContent = '🔥 fanout 발사 중… ' + active.length + ' 계정 · ' + category + ' · 메시지 ' + (1 + extraCount) + '개'
+  const gapMs = Math.max(0, parseInt($('ocFanoutGapMs').value, 10) || 2500)
+  const jitterMs = Math.max(0, parseInt($('ocFanoutJitterMs').value, 10) || 1500)
+  const shuffle = $('ocFanoutShuffle').checked
+  const expectedTotalSec = Math.round((active.length - 1) * (gapMs + jitterMs / 2) / 1000)
+  $('out').textContent = '🔥 fanout 발사 중… ' + active.length + ' 계정 · ' + category + ' · 메시지 ' + (1 + extraCount) + '개 · 예상 ' + expectedTotalSec + 's'
   try {
-    const j = await post('/report/openchat-fanout', { ctx, category, userIds })
+    const j = await post('/report/openchat-fanout', { ctx, category, userIds, gapMs, jitterMs, shuffle })
     $('out').textContent = (j.text || '') + '\n\n' + JSON.stringify(j, null, 1)
   } catch (e) { $('out').textContent = '실패: ' + e.message }
   await refreshAccounts()  // last_used/last_status 갱신
@@ -845,8 +864,10 @@ async function ocOne() {
     } catch (e) { $('out').textContent = '실패: ' + e.message }
     return
   }
-  // N회 연속 — 같은 계정이 같은 (category, logId) 에 몇 번 꽂히는지 확인용
-  const lines = ['연속 ' + repeat + '회 · category=' + category + ' · ' + msgTag + ' · 주logId=' + pickedCtx.logId, '']
+  // N회 연속 — 쓰로틀 적용 (간격+지터)
+  const gap = Math.max(0, parseInt($('ocRepeatGapMs').value, 10) || 2000)
+  const jit = Math.max(0, parseInt($('ocRepeatJitterMs').value, 10) || 1500)
+  const lines = ['연속 ' + repeat + '회 · category=' + category + ' · ' + msgTag + ' · 간격 ' + gap + '~' + (gap + jit) + 'ms', '']
   let ok = 0
   $('out').textContent = lines.join('\n') + '\n발사 중… 0/' + repeat
   for (let i = 1; i <= repeat; i++) {
@@ -859,6 +880,11 @@ async function ocOne() {
       lines.push('x ' + i + '  네트워크실패: ' + e.message)
     }
     $('out').textContent = lines.join('\n') + '\n발사 중… ' + i + '/' + repeat
+    // 쓰로틀 — 마지막 발사 뒤에는 대기 생략
+    if (i < repeat) {
+      const wait = gap + Math.floor(Math.random() * (jit + 1))
+      await new Promise((r) => setTimeout(r, wait))
+    }
   }
   lines.push('')
   lines.push('접수 ' + ok + '/' + repeat + (ok === 0 ? ' — 전부 거부' : ok === repeat ? ' — 전부 접수 (dedupe 없음)' : ' — 일부만 접수 (dedupe 가능)'))
