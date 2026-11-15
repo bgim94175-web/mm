@@ -97,11 +97,26 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   <div class="row"><button onclick="shape()">BLSPAMS 바디 변형 탐색</button><button onclick="dump()">BSON hex 덤프</button></div>
 
   <h2>오픈채팅 HTTP 신고 (open.kakao.com/c/fraud/report/chatLogs)</h2>
-  <label>카테고리 (비우면 SPAM, APK enum 이름 그대로)</label>
-  <input id="ocCat" placeholder="SPAM · SEXUAL · FRAUD · SUICIDE · PROTECTCHILD · VIOLENT · ILLEGAL · PRIVACY · YOUTH_UNSUITABLE · ETC · RIGHT · ILLEGAL_FILMING">
+  <label>카테고리 — 한 개만 집중 (12개 분산은 서버가 dedupe 함)</label>
+  <select id="ocCat">
+    <option value="RIGHT">RIGHT — 욕설·비하·증오발언 (★유력)</option>
+    <option value="VIOLENT">VIOLENT — 폭력·위협</option>
+    <option value="SEXUAL">SEXUAL — 음란성</option>
+    <option value="SPAM">SPAM — 광고·도배</option>
+    <option value="FRAUD">FRAUD — 사기·피싱</option>
+    <option value="PROTECTCHILD">PROTECTCHILD — 아동보호 (자동정지 임계↓)</option>
+    <option value="ILLEGAL_FILMING">ILLEGAL_FILMING — 불법촬영물 (자동정지 임계↓)</option>
+    <option value="ILLEGAL">ILLEGAL — 불법·약물</option>
+    <option value="PRIVACY">PRIVACY — 개인정보 노출</option>
+    <option value="YOUTH_UNSUITABLE">YOUTH_UNSUITABLE — 청소년 유해</option>
+    <option value="SUICIDE">SUICIDE — 자살·자해</option>
+    <option value="ETC">ETC — 기타</option>
+  </select>
+  <label>연속 발사 횟수 (한 계정 N회 — 서버 dedupe 유무 확인용)</label>
+  <input id="ocRepeat" inputmode="numeric" value="1" placeholder="기본 1회">
   <div class="g">
-    <button onclick="ocOne()">1회 쏘기 (선택 카테고리)</button>
-    <button class="p" onclick="ocFireAll()">12종 전부 발사</button>
+    <button class="p" onclick="ocOne()">선택 카테고리 집중 발사</button>
+    <button onclick="ocFireAll()">(참고용) 12종 뿌리기</button>
   </div>
   <div class="row"><button onclick="uVerdict()">u 판정 — 작성자(a)/대상(b)/없는번호(c) 3연발</button></div>
 
@@ -120,8 +135,10 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
 const $ = (id) => document.getElementById(id)
 const st = JSON.parse(localStorage.getItem('rp5') || '{}')
 $('k').value = st.k || ''; $('email').value = st.email || ''; $('uid').value = st.uid || ''; $('txt').value = st.txt || ''; $('c').value = st.c || ''; $('l').value = st.l || ''
-$('mth').value = st.mth || ''; $('rawM').value = st.rawM || ''; $('rawB').value = st.rawB || ''; $('ocCat').value = st.ocCat || ''
-const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value, ocCat: $('ocCat').value }))
+$('mth').value = st.mth || ''; $('rawM').value = st.rawM || ''; $('rawB').value = st.rawB || ''
+if (st.ocCat) $('ocCat').value = st.ocCat
+if (st.ocRepeat) $('ocRepeat').value = st.ocRepeat
+const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value, ocCat: $('ocCat').value, ocRepeat: $('ocRepeat').value }))
 const q = () => '?k=' + encodeURIComponent($('k').value)
 
 async function post(path, body) {
@@ -296,14 +313,37 @@ function ctxWithInject() {
   return Object.assign({}, pickedCtx, inject ? { injectText: inject } : {})
 }
 async function ocOne() {
+  save()
   if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
-  const category = ($('ocCat').value || 'SPAM').trim().toUpperCase()
+  const category = ($('ocCat').value || 'RIGHT').trim().toUpperCase()
   const ctx = ctxWithInject()
-  $('out').textContent = '오픈챗 1회 (' + category + ') 쏘는 중…' + (ctx.injectText ? ' [조작문:' + ctx.injectText.slice(0, 40) + ']' : '')
-  try {
-    const j = await post('/report/openchat-one', { ctx, category })
-    $('out').textContent = (j.msg || '') + '\n\n' + JSON.stringify(j, null, 1)
-  } catch (e) { $('out').textContent = '실패: ' + e.message }
+  const repeat = Math.max(1, Math.min(50, parseInt($('ocRepeat').value, 10) || 1))
+  if (repeat === 1) {
+    $('out').textContent = '발사 1회 (' + category + ') …' + (ctx.injectText ? ' [조작문:' + ctx.injectText.slice(0, 40) + ']' : '')
+    try {
+      const j = await post('/report/openchat-one', { ctx, category })
+      $('out').textContent = (j.msg || '') + '\n\n' + JSON.stringify(j, null, 1)
+    } catch (e) { $('out').textContent = '실패: ' + e.message }
+    return
+  }
+  // N회 연속 — 같은 계정이 같은 (category, logId) 에 몇 번 꽂히는지 확인용
+  const lines = ['연속 ' + repeat + '회 · category=' + category + ' · l=' + pickedCtx.logId, '']
+  let ok = 0
+  $('out').textContent = lines.join('\n') + '\n발사 중… 0/' + repeat
+  for (let i = 1; i <= repeat; i++) {
+    try {
+      const j = await post('/report/openchat-one', { ctx, category })
+      const mark = j.ok ? '★' : '·'
+      lines.push(mark + ' ' + i + '  http=' + j.http + ' status=' + (j.status != null ? j.status : '-'))
+      if (j.ok) ok++
+    } catch (e) {
+      lines.push('x ' + i + '  네트워크실패: ' + e.message)
+    }
+    $('out').textContent = lines.join('\n') + '\n발사 중… ' + i + '/' + repeat
+  }
+  lines.push('')
+  lines.push('접수 ' + ok + '/' + repeat + (ok === 0 ? ' — 전부 거부' : ok === repeat ? ' — 전부 접수 (dedupe 없음)' : ' — 일부만 접수 (dedupe 가능)'))
+  $('out').textContent = lines.join('\n')
 }
 async function uVerdict() {
   if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
