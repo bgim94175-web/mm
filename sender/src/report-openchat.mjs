@@ -70,11 +70,18 @@ function authHeader(credOverride, opts = {}) {
     'accept': 'application/json',
     'user-agent': 'KT/26.8.3 An/13 ko',
     'a': 'android/26.8.3/ko',
-    // ★ APK 9차 — s0.b() 가 모든 /c/fraud/* 요청에 ADID (Google Advertising ID) 주입.
-    // 봇이 그동안 생략 → 서버 "봇/비정상 클라이언트" 분류 또는 "같은 디바이스 중복 신고"
-    // 묶기 silent-reject 유력 원인. 계정별 고정 UUID v4 로 "각자 다른 디바이스" 시뮬레이션.
-    'adid': c.adid || adidFromDuuid(c.duuid) || '00000000-0000-4000-a000-000000000000',
   }
+  // ★ APK 9차 — s0.b() 가 /c/fraud/* 에 ADID 주입. 하지만 봇이 넣은 랜덤 UUID 가
+  // Google 교차검증에 걸려 -500 유발 가능성. 환경변수로 모드 전환:
+  //   REPORT_ADID_MODE=per_account  (디폴트, 계정별 UUID v4)
+  //   REPORT_ADID_MODE=optout       (빈 문자열 — "Ad personalization opt-out" 흉내)
+  //   REPORT_ADID_MODE=zeros        ("00000000-0000-0000-0000-000000000000")
+  //   REPORT_ADID_MODE=off          (헤더 완전 생략 — 교정 전 상태)
+  const mode = String(process.env.REPORT_ADID_MODE || 'per_account').toLowerCase()
+  if (mode === 'optout') h['adid'] = ''
+  else if (mode === 'zeros') h['adid'] = '00000000-0000-0000-0000-000000000000'
+  else if (mode === 'off') { /* 헤더 생략 */ }
+  else h['adid'] = c.adid || adidFromDuuid(c.duuid) || '00000000-0000-0000-0000-000000000000'
   if (opts.includeApkHeaders) {
     h['accept-language'] = 'ko'
     h['c'] = randomUUID()
