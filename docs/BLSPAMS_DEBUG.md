@@ -37,6 +37,33 @@
 - 15분 대기 후 1.5초 간격으로 sr 0~5 발사 → 전부 `body.status=-301`
 - rate limit 이었으면 한두 개는 뚫렸어야 함 → 서버가 구조적으로 거부
 
+### ★★★ 2026-11-15 category enum → 공식 분류 매핑 확정 (APK 26.8.3 resources.arsc) ★★★
+
+APK 254MB 를 gdown 으로 다운받아 `resources.arsc` 를 androguard 로 파싱,
+`abuse_report_detail_<enum>_desc<n>` 패턴의 string resources 를 전부 뽑아서 확정.
+한국어 문자열은 `split_config.ko.apk` 에 있어 base APK 에는 영어만 담김 — 하지만 enum ↔
+desc 매핑은 영어로도 완벽히 확인됨.
+
+| enum (`Lrg61`) | 공식 상위 분류 | 영어 desc 증거 |
+|---|---|---|
+| **VIOLENT** | **욕설·증오발언·폭력·혐오** | desc8 "Profanity, vulgar language", desc4/9 "discrimination/prejudice on grounds of origin, race, appearance, disability", desc5 "violence or brutality", desc6 "violent extremism" |
+| SEXUAL | 음란·성적 행위 | desc1-14 "body exposure, sexual acts, prostitution, pornography" |
+| SPAM | 불법 스팸 및 서비스 운영방해 | desc1 "For-profit advertisements without prior consent", desc3 "repeatedly transmitting same content" |
+| FRAUD | 사기·사칭 | desc1 "impersonating family, financial inst.", desc3 "sextortion/romance scam", desc5-7 "impersonation of government/finance/Kakao" |
+| ILLEGAL | 불법 상품·서비스 + 투자자문 | desc1-14 "gambling/illegal products", desc15-16 "**illegal investment advertisements** / **unqualified investment advice**" |
+| PRIVACY | 개인정보 무단 수집·유포 | desc1 "distributing/posting personal info", desc2 "illegally collecting/stealing/trading" |
+| RIGHT | **권리침해** (별도 신고센터) | desc1 "Defamation", desc2 "Invasion of privacy", desc3 "Copyright infringement" |
+| PROTECTCHILD | 아동·청소년 보호 (법규 zero-tolerance) | desc "grooming, sexual exploitation of minors" |
+| ILLEGAL_FILMING | 불법촬영물·딥페이크 (법규 zero-tolerance) | desc1 "illegally filmed contents", desc3 "False videos (Deepfakes)" |
+| SUICIDE | 자살·자해 (긴급구조 협조) | desc1 "Expression of intention to commit suicide" |
+| YOUTH_UNSUITABLE | 청소년 유해 | desc1 "alcohol, tobacco, illegal drugs", desc2 "weapons, knives", desc4 "school violence, bullying" |
+| ETC | 계정/API/프로토콜 어뷰징 | desc1-8 "abnormal programs, KakaoTalk protocols/APIs/source codes, Kakao Account trading" |
+
+**중요 교정**: 이전에 "RIGHT = 욕설·증오발언" 으로 추측했던 건 **틀림**. RIGHT 는 **명예훼손/저작권
+전용 "권리침해 신고센터"** 경로. "욕설·증오발언·폭력·혐오" 처분 통지를 트리거하려면 반드시 **VIOLENT**.
+
+UI 드롭다운 기본값과 fallback 모두 VIOLENT 로 전환됨 (rp-v33).
+
 ### ★★★ 2026-11-14 완전 성공 ★★★
 
 **첫 라이브 접수 성공 로그 (2026-11-14 ~17:xx):**
