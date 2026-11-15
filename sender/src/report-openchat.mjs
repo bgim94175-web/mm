@@ -74,8 +74,12 @@ function logItem(lg, isPrimary) {
   const uRaw = (isPrimary && lg.authorIdOverride != null && lg.authorIdOverride !== '')
     ? lg.authorIdOverride
     : lg.authorId
+  // logIdOverride: 서버가 logId 를 실존 체크하는지 확인용 (가짜 logId 로 쐈을 때 반응).
+  const lRaw = (isPrimary && lg.logIdOverride != null && lg.logIdOverride !== '')
+    ? lg.logIdOverride
+    : lg.logId
   const u = longStr(uRaw)
-  const l = longStr(lg.logId)
+  const l = longStr(lRaw)
   const s = Number(lg.sendAt) || 0
   // type==0 (시스템 메시지) 도 유효한 값이라 || 1 은 바이트 왜곡. 숫자로 파싱되면 그대로 유지.
   const tn = Number(lg.type)

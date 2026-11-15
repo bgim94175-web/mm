@@ -184,6 +184,8 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   </div>
   <div class="me" style="margin-top:6px">fanout: 위 "계정 풀" 에서 체크된 계정들로 동시 발사 — N 명이 신고한 것처럼 보임 → 서버 집계 임계치 돌파에 결정적</div>
   <div class="row" style="margin-top:8px"><button onclick="uVerdict()">u 판정 — 작성자(a)/대상(b)/없는번호(c) 3연발</button></div>
+  <div class="row" style="margin-top:6px"><button onclick="ocMessageVerdict()" style="background:#5c1a3a;color:#fcc">📝 조작 반영 판정 — 서버가 조작 문장을 실제로 쓰는지 확인</button></div>
+  <div class="row" style="margin-top:6px"><button onclick="ocDedupeVerdict()" style="background:#1a5c3a;color:#cfc">♻️ 1계정 1신고 확인 — 같은 (reporter, logId) 2연발</button></div>
 
   <h2>raw LOCO (운영자 전용)</h2>
   <label>method</label>
@@ -626,6 +628,64 @@ async function doAddAccountPasscode() {
     out.textContent = j.message || (j.ok ? '성공' : '실패')
     if (j.ok) { await refreshAccounts(); setTimeout(() => closeAddAccount(), 1500) }
   } catch (e) { out.textContent = '실패: ' + e.message }
+}
+
+// 📝 조작 반영 판정 — 3 case 쏘기 (실제l+조작 / 가짜l+조작 / 실제l+원문).
+// 서버가 logId 실존 체크 안 하면 (b) 도 status=0 → 조작 문장 그대로 심사자료 반영 확정.
+async function ocMessageVerdict() {
+  if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
+  const category = ($('ocCat').value || 'VIOLENT').trim().toUpperCase()
+  const inject = ($('txt').value || '').trim()
+  if (!inject) { $('out').textContent = '📝 신고 본문 조작 섹션에 문장을 넣어야 테스트 됨 (조작 ↔ 원문 비교가 목적)'; return }
+  const fakeLogId = '1'  // 존재할 리 없는 작은 수 — 실제 카카오 logId 는 10^18 대
+  const cases = [
+    { tag: '(a) 실제logId + 조작문장', ctx: Object.assign({}, pickedCtx, { injectText: inject }) },
+    { tag: '(b) 가짜logId(1) + 조작문장', ctx: Object.assign({}, pickedCtx, { logIdOverride: fakeLogId, injectText: inject }) },
+    { tag: '(c) 실제logId + 실제원문 (비교군)', ctx: Object.assign({}, pickedCtx) },
+  ]
+  const lines = ['category=' + category + ' · l=' + pickedCtx.logId + ' · 조작="' + inject.slice(0, 40) + '"', '']
+  $('out').textContent = lines.join('\n') + '\n발사 중…'
+  for (const kase of cases) {
+    try {
+      const j = await post('/report/openchat-one', { ctx: kase.ctx, category })
+      lines.push(kase.tag)
+      lines.push('  http=' + j.http + ' status=' + (j.status != null ? j.status : '-') + (j.ok ? ' ★접수' : ''))
+      if (j.respBody && typeof j.respBody === 'object') lines.push('  respBody=' + JSON.stringify(j.respBody))
+      lines.push('')
+    } catch (e) {
+      lines.push(kase.tag + ' 실패: ' + e.message, '')
+    }
+    $('out').textContent = lines.join('\n')
+  }
+  lines.push('※ 판정 해석:')
+  lines.push('  • (a)=(b)=(c) 전부 status=0 → 서버가 logId 실존 안 봄 → 조작 문장이 그대로 심사자료로 올라감 (조작 유효)')
+  lines.push('  • (a)(c) 접수, (b) 거부 → 서버가 logId 실존 체크함 → 서버가 DB 에서 원문 대조할 가능성 (조작 무효 위험)')
+  lines.push('  • (a) 거부 → 1계정 1신고 dedupe 이미 걸림 (앞에서 접수한 신고 있었다는 뜻)')
+  $('out').textContent = lines.join('\n')
+}
+
+// ♻️ 1계정 1신고 확인 — 같은 (reporter, logId, category) 로 2번 연속 쏘기.
+// 두 번째가 거부되면 서버가 dedupe 함 → 1계정 1신고 확정.
+async function ocDedupeVerdict() {
+  if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
+  const category = ($('ocCat').value || 'VIOLENT').trim().toUpperCase()
+  const ctx = ctxWithInject()
+  const lines = ['category=' + category + ' · l=' + pickedCtx.logId + ' · 같은 primary 계정 2연발', '']
+  $('out').textContent = lines.join('\n') + '\n발사 중…'
+  for (let i = 1; i <= 2; i++) {
+    try {
+      const j = await post('/report/openchat-one', { ctx, category })
+      lines.push('(' + i + '번째)')
+      lines.push('  http=' + j.http + ' status=' + (j.status != null ? j.status : '-') + (j.ok ? ' ★접수' : ''))
+      if (j.respBody && typeof j.respBody === 'object') lines.push('  respBody=' + JSON.stringify(j.respBody))
+      lines.push('')
+    } catch (e) { lines.push('(' + i + '번째) 실패: ' + e.message, '') }
+    $('out').textContent = lines.join('\n')
+  }
+  lines.push('※ 판정:')
+  lines.push('  • 둘 다 status=0 → 서버 dedupe 없음, 같은 계정이 N번 쏠 수 있음 (연속 발사 효과)')
+  lines.push('  • 1번만 0, 2번째 거부 → dedupe 확정, 1계정 1신고 — fanout 외엔 임계치 올릴 길 없음')
+  $('out').textContent = lines.join('\n')
 }
 
 async function ocFanout() {
