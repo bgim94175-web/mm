@@ -169,10 +169,13 @@ function clampSendAt(raw) {
   return Math.floor(n)
 }
 
-// ★ 모든 항목에 (선택) injectText·authorIdOverride·logIdOverride 적용
-// 2026-11-15: injectText 는 **명시적 enableInject 플래그가 true 일 때만** 사용.
-// 라이브 로그 분석 결과 조작문 주입 시 http=200/status=0 로 silent-accept 되지만 서버가
-// u·l 조합으로 DB 원문 cross-check 해서 실제 제재 안 거는 패턴 강력 의심. 기본은 원문.
+// ★ v59-A D1/D5/D6/D8 — logItem 재작성. yud1.f + yud1.j 그대로:
+//   outer 키 순서: u → m → s → t → l → scope → (threadId?)
+//   m 키는 4개 조건부: message(blank 아닐 때) / attachment(길이>0) /
+//     referer(null 아닐 때) / revision(null 아닐 때). 0 은 유효값으로 포함.
+//   u/l strictLong, s/t/scope strictInt. scope 하드코딩 "1" 제거 — lg.scope ?? ctx.scope.
+//   object 반환 → buildChatLogInfosString() 에서 assertShape 후 JSON.stringify.
+//   injectText (D8): primary 만 ctx.injectText 로 덮을 수 있음. extra 는 자기 injectText 만.
 function logItem(lg, isPrimary, ctx) {
   const uRaw =
     (lg.authorIdOverride != null && lg.authorIdOverride !== '') ? lg.authorIdOverride
@@ -182,49 +185,43 @@ function logItem(lg, isPrimary, ctx) {
     (lg.logIdOverride != null && lg.logIdOverride !== '') ? lg.logIdOverride
     : (ctx && ctx.logIdOverride != null && ctx.logIdOverride !== '') ? ctx.logIdOverride
     : lg.logId
-  const u = longStr(uRaw)
-  const l = longStr(lRaw)
+  const u = strictLong(uRaw, 'u')
+  const l = strictLong(lRaw, 'l')
   const s = clampSendAt(lg.sendAt)
-  const tn = Number(lg.type)
-  const t = Number.isFinite(tn) && tn >= 0 ? tn : 1
+  const t = strictInt(lg.type, 't')
+  const scopeRaw = lg.scope != null ? lg.scope : (ctx && ctx.scope != null ? ctx.scope : null)
+  const scope = strictInt(scopeRaw, 'scope')
 
+  // D8 — primary 만 ctx.injectText 로 덮음. extra 는 자기 injectText 아니면 원문.
   const injectEnabled = (lg.enableInject === true) || (ctx && ctx.enableInject === true)
   let rawMsg = ''
   if (injectEnabled && lg.injectText != null && String(lg.injectText).trim()) {
     rawMsg = String(lg.injectText)
-  } else if (injectEnabled && ctx && ctx.injectText != null && String(ctx.injectText).trim()) {
+  } else if (injectEnabled && isPrimary && ctx && ctx.injectText != null && String(ctx.injectText).trim()) {
     rawMsg = String(ctx.injectText)
   } else {
     rawMsg = String(lg.message || '')
   }
-  const msg = jsonEscape(rawMsg)
-  // ★ 11차 반영: m 안의 attachment · referer · revision 을 원본 chatLog 값 그대로.
-  //   attachment 는 chatLog 의 raw string — length>0 일 때만 put (yud1.j 로직 그대로).
-  //   referer/revision 은 int, 원본값 없으면 0.
-  const attachmentRaw = (lg.attachment != null ? String(lg.attachment) : '')
-  const referer = Number.isFinite(Number(lg.referer)) ? Number(lg.referer) : 0
-  const revision = Number.isFinite(Number(lg.revision)) ? Number(lg.revision) : 0
-  const mParts = ['"message":"' + msg + '"']
-  if (attachmentRaw.length > 0) {
-    // attachment 는 보통 이미 JSON string. 그대로 string value 로 encode.
-    mParts.push('"attachment":"' + jsonEscape(attachmentRaw) + '"')
+  const text = trunc500(rawMsg)
+
+  // m 4키 조건부. 순서 message → attachment → referer → revision.
+  const m = {}
+  if (text) m.message = text
+  if (lg.attachmentJson != null && String(lg.attachmentJson).length > 0) {
+    m.attachment = String(lg.attachmentJson)
   }
-  mParts.push('"referer":' + referer)
-  mParts.push('"revision":' + revision)
-  const parts = [
-    '"u":' + u,
-    '"m":{' + mParts.join(',') + '}',
-    '"s":' + s,
-    '"t":' + t,
-    '"l":' + l,
-    '"scope":1',
-  ]
-  if (lg.threadId != null && lg.threadId !== '') {
-    parts.push('"threadId":' + longStr(lg.threadId))
-  } else if (ctx && ctx.threadId != null && ctx.threadId !== '') {
-    parts.push('"threadId":' + longStr(ctx.threadId))
+  if (lg.referer != null) m.referer = strictInt(lg.referer, 'referer')
+  if (lg.revision != null) m.revision = strictInt(lg.revision, 'revision')
+
+  const o = { u, m, s, t, l, scope }
+  // threadId — null/undefined 면 키 생략, 0 이면 "threadId":0 송출. Long 이라 15자리 제한 없음.
+  const threadRaw = lg.threadId != null ? lg.threadId : (ctx && ctx.threadId != null ? ctx.threadId : null)
+  if (threadRaw != null) {
+    const ts = String(threadRaw)
+    if (!/^\d+$/.test(ts)) throw new Error('threadId 형식: ' + ts)
+    o.threadId = ts
   }
-  return '{' + parts.join(',') + '}'
+  return o
 }
 
 export function buildChatLogInfosString(ctx) {
@@ -235,7 +232,30 @@ export function buildChatLogInfosString(ctx) {
       items.push(logItem(extra, false, ctx))
     }
   }
-  return '[' + items.join(',') + ']'
+  // v59-A §4 — assertShape 전량. 하나라도 실패하면 throw (buildBody caller 가 catch).
+  for (const o of items) assertShape(o)
+  // u/l 은 JSON number 로, threadId 도 number 가 자연스럽지만 Long 이라 JS 정수 안전범위를
+  // 넘을 수 있다. 각 값이 strictLong 통과한 숫자 문자열이므로 raw JSON 조립으로 처리.
+  const encoded = items.map(encodeItem)
+  return '[' + encoded.join(',') + ']'
+}
+
+// 각 logItem object 를 JSON string 으로 — Long 필드는 JSON number 로 그대로 삽입 (quote 안 함).
+function encodeItem(o) {
+  const parts = []
+  parts.push('"u":' + o.u)
+  const mParts = []
+  if (o.m.message != null) mParts.push('"message":' + JSON.stringify(o.m.message))
+  if (o.m.attachment != null) mParts.push('"attachment":' + JSON.stringify(o.m.attachment))
+  if (o.m.referer != null) mParts.push('"referer":' + o.m.referer)
+  if (o.m.revision != null) mParts.push('"revision":' + o.m.revision)
+  parts.push('"m":{' + mParts.join(',') + '}')
+  parts.push('"s":' + o.s)
+  parts.push('"t":' + o.t)
+  parts.push('"l":' + o.l)
+  parts.push('"scope":' + o.scope)
+  if (o.threadId != null) parts.push('"threadId":' + o.threadId)
+  return '{' + parts.join(',') + '}'
 }
 
 export function buildBody(ctx, category) {
