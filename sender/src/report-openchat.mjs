@@ -69,9 +69,23 @@ function adidFromDuuid(duuid) {
 
 function authHeader(credOverride, opts = {}) {
   const c = credOverride || getCred()
-  if (!c || !c.oauthToken || !c.duuid) throw new Error('로그인 안 됨 (cred 없음)')
+  if (!c || !c.oauthToken) throw new Error('로그인 안 됨 (cred 없음)')
+  // ★ v59-A D7 — Authorization 접미사 A/B (§12 APK vs BLSPAMS_DEBUG rp-v44 충돌).
+  //   'plain'  = oauthToken 그대로 (APK c4c0.i() 리턴값)
+  //   'duuid'  = oauthToken + '-' + duuid (rp-v44 재분석 결론, 라이브 72건 통과한 값)
+  //   둘 다 라이브에서 접수된 적 있음. P1 프로브가 어느 쪽이 접수되는지 2회로 확정 후
+  //   기본값 재조정. 그 전까지 어느 쪽도 삭제하지 않는다.
+  //   ★ 결정될 때까지 호환성 유지 위해 환경변수 REPORT_AUTH_STYLE=duuid 로 즉시 전환 가능.
+  const style = (opts.authStyle || process.env.REPORT_AUTH_STYLE || 'plain').toLowerCase()
+  let authValue
+  if (style === 'duuid') {
+    if (!c.duuid) throw new Error("authStyle 'duuid' 선택인데 cred 에 duuid 없음")
+    authValue = c.oauthToken + '-' + c.duuid
+  } else {
+    authValue = c.oauthToken
+  }
   const h = {
-    'authorization': c.oauthToken + '-' + c.duuid,
+    'authorization': authValue,
     'content-type': 'application/json',
     'accept': 'application/json',
     'user-agent': 'KT/26.8.3 An/13 ko',
