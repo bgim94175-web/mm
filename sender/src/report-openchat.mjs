@@ -22,15 +22,22 @@ export const CATEGORIES = [
 const GAP = 400
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// APK 26.8.3 OkHttp 공통 interceptor 가 매 요청마다 붙이는 헤더 — KakaoTalk Android 가
+// 실제 소켓에 실어내는 포맷과 바이트 단위로 같아야 한다. 필드 이름·순서·대소문자 그대로.
 function authHeader() {
   const c = getCred()
   if (!c || !c.oauthToken) throw new Error('로그인 안 됨')
   return {
-    authorization: c.oauthToken + '-' + c.duuid,
-    'content-type': 'application/json',
-    accept: 'application/json',
-    'user-agent': 'KT/26.8.3 An/13 ko',
-    'a': 'android/26.8.3/ko',
+    // KT CommonHeaderInterceptor 순서 그대로 (lowercase — Node fetch 가 어차피 소문자로 보냄)
+    'authorization': c.oauthToken + '-' + c.duuid,
+    's': '7',                                   // 서비스 = kakao.com
+    'c': 'olk',                                 // 오픈링크 서비스
+    'a': 'android/26.8.3/ko',                   // app / version / lang
+    'user-agent': 'KT/26.8.3 An/13 ko',         // KT 포맷 (K T / 버전 A n / API lang)
+    'accept-language': 'ko',
+    'accept': 'application/json',
+    'content-type': 'application/json;charset=UTF-8',
+    'accept-encoding': 'gzip',                  // OkHttp 기본값 — 명시해 두면 변동 없음
   }
 }
 
@@ -69,12 +76,28 @@ export function buildChatLogInfosString(ctx) {
   // injectText 가 있으면 그걸로 원문 조작, 없으면 실제 원문. 심사 자료가 됨.
   const rawMsg = (ctx.injectText && String(ctx.injectText).trim()) ? String(ctx.injectText) : String(ctx.message || '')
   const msg = jsonEscape(rawMsg)
-  // threadId 생략 — 앱도 null 일 때 안 보냄
-  return '[{"u":' + u + ',"m":{"message":"' + msg + '","referer":0,"revision":0},"s":' + s + ',"t":' + t + ',"l":' + l + ',"scope":1}]'
+  // ─── 필드 순서는 APK Lyud1;->j(StringBuilder 조립 순서) 와 바이트 단위로 일치 ───
+  //  u → m{message→referer→revision} → s → t → l → scope
+  //  threadId 는 null 이면 생략 (앱도 동일).
+  const parts = [
+    '"u":' + u,
+    '"m":{"message":"' + msg + '","referer":0,"revision":0}',
+    '"s":' + s,
+    '"t":' + t,
+    '"l":' + l,
+    '"scope":1',
+  ]
+  if (ctx.threadId != null && ctx.threadId !== '' && String(ctx.threadId) !== '0') {
+    parts.push('"threadId":' + longStr(ctx.threadId))
+  }
+  return '[{' + parts.join(',') + '}]'
 }
 
 export function buildBody(ctx, category) {
-  // linkId/chatId 도 큰 숫자. JSON.stringify 가 Number 를 받으면 정밀도 손실 → raw string 조립.
+  // ChatLogsReportParams kotlinx-serialization 필드 선언 순서:
+  //   category → linkId → chatId → chatLogInfos
+  // kotlinx 는 선언 순서대로 바이트를 뱉으므로 같은 순서로 수동 조립 → 바이트 일치.
+  // linkId/chatId 는 Long. JSON.stringify 의 Number 통로는 2^53 초과시 정밀도 손실.
   const linkId = longStr(ctx.linkId)
   const chatId = longStr(ctx.chatId)
   const cat = jsonEscape(String(category || 'SPAM'))
