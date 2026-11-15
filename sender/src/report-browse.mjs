@@ -60,8 +60,10 @@ export function rooms() {
 }
 
 // 방 하나의 최근 메시지. 라이브러리 패턴:
-//   1) MCHATLOGS {chatIds:[c], sinces:[0]} → chatLogs[]
-//   2) 비면 CHATINFO 로 lastLogId → SYNCMSG {c, cur:last-80, cnt, max:last}
+//   1) CHATINFO → lastLogId → SYNCMSG {c, cur:last-N, cnt, max:last}  — 최신 N개 보장
+//   2) 비면 MCHATLOGS {chatIds:[c], sinces:[0]}  — 폴백
+// 순서 주의: MCHATLOGS 를 먼저 쓰면 봇이 그간 수신한 오래된 로그만 뭉치로 와서
+// 최근 메시지(특히 봇 로그인 이후 쓴 테스트 메시지)가 가려짐.
 export async function messages(chatId, cnt) {
   if (!ready()) return { ok: false, text: 'LOCO 세션 없음' }
   if (!chatId) return { ok: false, text: 'chatId 필요' }
@@ -70,54 +72,54 @@ export async function messages(chatId, cnt) {
   const cid = L.fromString(String(chatId))
   const trace = []
 
-  // ① MCHATLOGS 먼저
+  // ① CHATINFO → SYNCMSG (최신 N 보장)
   let logs = []
+  let maxLogId = null
   try {
-    const r = await send('MCHATLOGS', { chatIds: [cid], sinces: [L.fromNumber(0)] })
-    trace.push('MCHATLOGS st=' + (r && r.statusCode))
-    if (r && r.statusCode === 0 && r.body && Array.isArray(r.body.chatLogs)) {
-      logs = r.body.chatLogs.filter((lg) => toIdString(lg.chatId) === String(chatId))
-      trace.push('mchat=' + logs.length)
+    const info = await send('CHATINFO', { chatId: cid })
+    trace.push('CHATINFO st=' + (info && info.statusCode))
+    const ci = info && info.body && info.body.chatInfo
+    if (ci && ci.lastLogId != null) {
+      const s = toIdString(ci.lastLogId)
+      if (s && s !== '0') maxLogId = L.fromString(s)
     }
   } catch (e) {
-    trace.push('MCHATLOGS ERR ' + (e && e.message ? e.message : e))
+    trace.push('CHATINFO ERR ' + (e && e.message ? e.message : e))
   }
 
-  // ② 비면 CHATINFO 로 max 받아서 SYNCMSG
-  if (!logs.length) {
-    let maxLogId = null
+  if (maxLogId) {
     try {
-      const info = await send('CHATINFO', { chatId: cid })
-      trace.push('CHATINFO st=' + (info && info.statusCode))
-      const ci = info && info.body && info.body.chatInfo
-      if (ci && ci.lastLogId != null) {
-        const s = toIdString(ci.lastLogId)
-        if (s && s !== '0') maxLogId = L.fromString(s)
+      // cur 는 "이 id 보다 큰" 글. max-(n+20) 쯤에서 시작해 최신 N 개 받기
+      const n80 = BigInt(n + 20)
+      const cur = (() => {
+        try {
+          const mstr = toIdString(maxLogId)
+          const back = BigInt(mstr) - n80
+          return back > 0n ? L.fromString(String(back)) : L.fromNumber(0)
+        } catch (e) { return L.fromNumber(0) }
+      })()
+      const sync = await send('SYNCMSG', { chatId: cid, cur, cnt: n, max: maxLogId })
+      trace.push('SYNCMSG st=' + (sync && sync.statusCode))
+      if (sync && sync.statusCode === 0 && sync.body && Array.isArray(sync.body.chatLogs)) {
+        logs = sync.body.chatLogs.filter((lg) => toIdString(lg.chatId) === String(chatId))
+        trace.push('sync=' + logs.length)
       }
     } catch (e) {
-      trace.push('CHATINFO ERR ' + (e && e.message ? e.message : e))
+      trace.push('SYNCMSG ERR ' + (e && e.message ? e.message : e))
     }
+  }
 
-    if (maxLogId) {
-      try {
-        // cur 는 "이 id 보다 큰" 글. max-N 쯤에서 시작해 최신 N 개 받기
-        const n80 = BigInt(n + 20)
-        const cur = (() => {
-          try {
-            const mstr = toIdString(maxLogId)
-            const back = BigInt(mstr) - n80
-            return back > 0n ? L.fromString(String(back)) : L.fromNumber(0)
-          } catch (e) { return L.fromNumber(0) }
-        })()
-        const sync = await send('SYNCMSG', { chatId: cid, cur, cnt: n, max: maxLogId })
-        trace.push('SYNCMSG st=' + (sync && sync.statusCode))
-        if (sync && sync.statusCode === 0 && sync.body && Array.isArray(sync.body.chatLogs)) {
-          logs = sync.body.chatLogs.filter((lg) => toIdString(lg.chatId) === String(chatId))
-          trace.push('sync=' + logs.length)
-        }
-      } catch (e) {
-        trace.push('SYNCMSG ERR ' + (e && e.message ? e.message : e))
+  // ② 폴백: MCHATLOGS
+  if (!logs.length) {
+    try {
+      const r = await send('MCHATLOGS', { chatIds: [cid], sinces: [L.fromNumber(0)] })
+      trace.push('MCHATLOGS st=' + (r && r.statusCode))
+      if (r && r.statusCode === 0 && r.body && Array.isArray(r.body.chatLogs)) {
+        logs = r.body.chatLogs.filter((lg) => toIdString(lg.chatId) === String(chatId))
+        trace.push('mchat=' + logs.length)
       }
+    } catch (e) {
+      trace.push('MCHATLOGS ERR ' + (e && e.message ? e.message : e))
     }
   }
 
