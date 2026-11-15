@@ -195,12 +195,17 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     </div>
     <label style="display:flex;align-items:center;gap:8px;margin-top:8px"><input type="checkbox" id="ocFanoutShuffle" checked style="width:auto;margin:0"><span>fanout 때 계정 순서 섞기 (봇 패턴 회피)</span></label>
   </div>
+  <label style="display:flex;align-items:center;gap:8px;margin-top:10px;color:#fca;font-size:13px">
+    <input type="checkbox" id="ocPostBlock" style="width:auto;margin:0" checked>
+    <span><b>🚫 완료 후 "차단" 추가</b> (primary LOCO 로 KICKMEM r=true 1회) — APK "차단하고 신고하기" 재현. <b>이게 제재 임계 돌파 핵심</b>으로 추정</span>
+  </label>
   <div class="row" style="margin-top:12px">
     <button class="p" onclick="ocFanout()" style="background:#c0392b;font-size:16px;padding:16px">🔥 fanout 발사 (활성 계정 전부) — 추천</button>
   </div>
-  <div class="me" style="margin-top:6px;color:#aba">⤷ 활성 계정 풀 전부로 동시 신고 (쓰로틀 자동 적용). 봇 계정은 그 방 멤버여야 접수됨 — 수동 입장 필요.</div>
+  <div class="me" style="margin-top:6px;color:#aba">⤷ 활성 계정 풀 전부로 Report POST + (체크 시) primary 가 KICKMEM 1회. 봇 계정은 그 방 멤버여야 접수됨.</div>
   <div class="row" style="margin-top:14px">
-    <button onclick="ocOne()">단일 계정 1회 (primary 계정만 · 진단용)</button>
+    <button onclick="ocOne()">단일 계정 Report 만 (primary · 진단용)</button>
+    <button class="p" onclick="ocReportBlock()" style="background:#c0392b">🚫 차단하고 신고 (primary · Report+KICKMEM)</button>
   </div>
   <div class="row" style="margin-top:8px"><button onclick="uVerdict()">u 판정 — 작성자(a)/대상(b)/없는번호(c) 3연발</button></div>
   <div class="row" style="margin-top:6px"><button onclick="ocMessageVerdict()" style="background:#5c1a3a;color:#fcc">📝 조작 반영 판정 — 서버가 조작 문장을 실제로 쓰는지 확인</button></div>
@@ -887,11 +892,25 @@ async function ocFanout() {
   const shuffle = $('ocFanoutShuffle').checked
   const expectedTotalSec = Math.round((active.length - 1) * (gapMs + jitterMs / 2) / 1000)
   $('out').textContent = '🔥 fanout 발사 중… ' + active.length + ' 계정 · ' + category + ' · 메시지 ' + (1 + extraCount) + '개 · 예상 ' + expectedTotalSec + 's'
+  const postBlock = !!($('ocPostBlock') && $('ocPostBlock').checked)
   try {
-    const j = await post('/report/openchat-fanout', { ctx, category, userIds, gapMs, jitterMs, shuffle })
+    const j = await post('/report/openchat-fanout', { ctx, category, userIds, gapMs, jitterMs, shuffle, postBlock })
     $('out').textContent = (j.text || '') + '\n\n' + JSON.stringify(j, null, 1)
   } catch (e) { $('out').textContent = '실패: ' + e.message }
   await refreshAccounts()  // last_used/last_status 갱신
+}
+
+// "차단하고 신고하기" primary 1회 — Report POST + KICKMEM LOCO
+async function ocReportBlock() {
+  save()
+  if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
+  const category = ($('ocCat').value || 'VIOLENT').trim().toUpperCase()
+  const ctx = ctxWithInject()
+  $('out').textContent = '🚫 Report + KICKMEM (' + category + ') …'
+  try {
+    const j = await post('/report/openchat-report-block', { ctx, category })
+    $('out').textContent = (j.msg || '') + '\n\n' + JSON.stringify(j, null, 1)
+  } catch (e) { $('out').textContent = '실패: ' + e.message }
 }
 
 async function ocOne() {

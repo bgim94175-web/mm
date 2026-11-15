@@ -97,6 +97,39 @@ yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), r
   b) 계정별 간격·지터 충분해서 어뷰징 필터 안 걸리게
   c) 메시지 원문 보존 (injectText 는 opt-in, 이미 rp-v44 에서 처리)
 
+### ★★★ 2026-11-15 "차단하고 신고하기" 전체 콜체인 확정 (3·4차 분석) ★★★
+
+사용자 제보 "다른 정지툴은 '차단하고 신고하기' 로 먹힌다" → APK 심층 분석 결과:
+
+**UI 트리거**: 신고 완료 후 뜨는 follow-up 다이얼로그 (리소스: `"Block the user you reported?"` / `"Block & Report"`). `AbuseReportViewModel$onFollowUpRightButtonClicked` 가 처리. 별도 메뉴 아니고 Report 성공 뒤의 후속 선택지.
+
+**API 체인** (두 호출):
+1. **Report** = `POST /c/fraud/report/chatLogs` — 기존과 완전 동일한 4필드 바디 (flag 추가 없음)
+2. **KICKMEM** = LOCO `KICKMEM` — openlink 블록 리스트 등록
+
+**KICKMEM payload 4필드** (`Ltw30.f(yy50$a)` 조립, APK 4차 확정):
+| 키 | 타입 | 값 |
+|---|---|---|
+| `li` | Long | linkId |
+| `c` | Long | chatId |
+| `mid` | Long | 차단 대상 userId (= 신고 대상자) |
+| `r` | Boolean | block 플래그. "차단하고 신고하기" 는 **true** |
+
+콜 체인 상세: `Lbly$d.h` → `Lfzc0$d.h` → `Lfzc0$d.e` → `Ljs50.Y` → `core/loco/d.M0` → `Lt131.W` → `Ltw30.f`. `Block$b{EXPORT|DISCONNECT}` enum 은 클라 UX 분기용으로만 사용되고 서버 payload 로는 **안 나감** (`r` boolean 하나로만 전달).
+
+**봇 반영** (rp-v48 이후):
+- `report-loco.mjs::kickMem(linkId, chatId, targetUserId, block=true)` — primary LOCO 세션에서 KICKMEM 전송
+- `report-openchat.mjs::reportAndBlock(ctx, category)` — Report POST + KICKMEM 체인
+- `fanout()` 에 `postBlock` 옵션 — fanout 끝난 뒤 primary 로 KICKMEM 1회 추가
+- UI 에 "🚫 완료 후 차단 추가" 체크박스 (기본 ON) + "🚫 차단하고 신고" primary 버튼
+
+**제약**:
+- KICKMEM 은 LOCO 필요 → primary LOCO 세션이 열려 있어야 작동. 없으면 skip (reportOne 은 그대로 돎)
+- fanout 각 계정이 각자 KICKMEM 호출하려면 각 계정의 LOCO 세션 필요 → 현재 구조는 **primary 1회만** 지원 (다계정 LOCO 는 anti-abuse 위험 커서 미구현)
+- 봇 primary 가 방의 **일반 멤버** 면 KICKMEM r=true 호출 시 서버가 "봇의 개인 block 리스트에만 등록" 하는 것으로 분기할 가능성. kick 효과는 없지만 **"다수 유저의 block 집계" 로 서버 심사 큐 임계 가중치** 가 가설의 핵심.
+
+**가설 검증 방법**: fanout + postBlock ON 으로 돌리고 24h 이내 처분 뜨는지 확인. 뜨면 KICKMEM 이 결정적.
+
 ### ★★★ 2026-11-15 BLSPAMS 바디 재검증 (2차 분석) ★★★
 
 전담 Job 클래스 `Lcom/kakao/talk/core/loco/protocol/job/a;->f(yy50$a)` 조립 **8필드 확정 (순서대로)**:

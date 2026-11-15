@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto'
 import { get as getCred } from './report-auth.mjs'
 import * as DB from './report-db.mjs'
+import * as LOCO from './report-loco.mjs'
 
 export const HOST = 'https://open.kakao.com'
 export const PATH = '/c/fraud/report/chatLogs'
@@ -221,6 +222,35 @@ export async function reportOne(ctx, category, opts = {}) {
   }
 }
 
+// ★ "차단하고 신고하기" — Report POST 1회 + KICKMEM LOCO 1회 (block=true).
+// KICKMEM 은 primary LOCO 세션 1개로만 (fanout 계정별 LOCO 미지원).
+// 서버가 report + block 조합을 "진짜 피해자 신고" 로 판정해 심사 큐 임계 가중치 둔다는 가설.
+export async function reportAndBlock(ctx, category, opts = {}) {
+  const rep = await reportOne(ctx, category, opts)
+  const result = { ok: rep.ok, report: rep, block: null, msg: rep.msg }
+  if (!rep.ok) {
+    result.msg = '(Report 실패 — KICKMEM 건너뜀) ' + rep.msg
+    return result
+  }
+  if (!LOCO.ready()) {
+    result.block = { ok: false, skipped: true, reason: 'LOCO 세션 없음 (primary 복구 필요)' }
+    result.msg = rep.msg + ' / KICKMEM skip: LOCO 연결 없음'
+    return result
+  }
+  try {
+    const r = await LOCO.kickMem(ctx.linkId, ctx.chatId, ctx.authorId, true)
+    const bs = r && r.body && typeof r.body.status === 'number' ? r.body.status : null
+    const ok = r && r.statusCode === 0 && (bs === 0 || bs == null)
+    result.block = { ok, statusCode: r && r.statusCode, status: bs, body: r && r.body }
+    result.msg = rep.msg + ' / KICKMEM ' + (ok ? '★차단OK' : '실패 st=' + (r && r.statusCode) + ' b=' + bs)
+    result.ok = rep.ok && ok
+  } catch (e) {
+    result.block = { ok: false, error: String(e && e.message ? e.message : e) }
+    result.msg = rep.msg + ' / KICKMEM ERR ' + result.block.error.slice(0, 80)
+  }
+  return result
+}
+
 export async function fireAll(ctx) {
   if (!ctx || !ctx.chatId || !ctx.logId || !ctx.authorId) return { ok: false, text: 'chatId · logId · authorId 필요' }
   const ordered = [PROFANITY_CATEGORY, ...CATEGORIES.filter((c) => c !== PROFANITY_CATEGORY)]
@@ -246,7 +276,7 @@ export async function probeShapes(host, ctx) {
   return { ok: r.ok, rows: [r.msg], text: r.msg + '\n(바디 모양은 APK 기준 확정 — 이 결과는 "경로 작동 여부" 확인)' }
 }
 
-export async function fanout(ctx, category, userIds, { gapMs = 2500, jitterMs = 1500, shuffle = true, warmupFn = null } = {}) {
+export async function fanout(ctx, category, userIds, { gapMs = 2500, jitterMs = 1500, shuffle = true, warmupFn = null, postBlock = false } = {}) {
   if (!ctx || !ctx.chatId || !ctx.logId || !ctx.authorId || !ctx.linkId) {
     return { ok: false, text: 'chatId · logId · authorId · linkId 필요' }
   }
@@ -281,9 +311,28 @@ export async function fanout(ctx, category, userIds, { gapMs = 2500, jitterMs = 
     if (r.ok) accepted++
     if (i + 1 < list.length) await sleep(gapMs + Math.floor(Math.random() * (jitterMs || 0)))
   }
+  // postBlock: 모든 fanout Report 끝난 뒤 primary LOCO 세션으로 KICKMEM 1회 추가.
+  // "차단하고 신고하기" UX 를 흉내내는 신호. primary 가 LOCO 열려 있을 때만 작동.
+  let postBlockResult = null
+  if (postBlock) {
+    if (!LOCO.ready()) {
+      postBlockResult = { ok: false, skipped: true, reason: 'LOCO 세션 없음 (primary 복구 필요)' }
+    } else {
+      try {
+        const r = await LOCO.kickMem(ctx.linkId, ctx.chatId, ctx.authorId, true)
+        const bs = r && r.body && typeof r.body.status === 'number' ? r.body.status : null
+        postBlockResult = { ok: r && r.statusCode === 0 && (bs === 0 || bs == null), statusCode: r && r.statusCode, status: bs }
+      } catch (e) {
+        postBlockResult = { ok: false, error: String(e && e.message ? e.message : e) }
+      }
+    }
+  }
+  const postBlockLine = postBlockResult
+    ? '\nKICKMEM(차단) ' + (postBlockResult.ok ? '★성공' : postBlockResult.skipped ? 'skip: ' + postBlockResult.reason : '실패 ' + (postBlockResult.error || 'st=' + postBlockResult.statusCode + ' b=' + postBlockResult.status))
+    : ''
   return {
-    ok: accepted > 0, accepted, total: list.length, rows, gapMs, jitterMs, shuffled: shuffle,
-    text: warmupNote + 'fanout 접수 ' + accepted + '/' + list.length + ' category=' + cat + ' (간격 ' + gapMs + '~' + (gapMs + (jitterMs || 0)) + 'ms, shuffle=' + shuffle + ')\n' + rows.map((x) => x.msg).join('\n'),
+    ok: accepted > 0, accepted, total: list.length, rows, gapMs, jitterMs, shuffled: shuffle, postBlock: postBlockResult,
+    text: warmupNote + 'fanout 접수 ' + accepted + '/' + list.length + ' category=' + cat + ' (간격 ' + gapMs + '~' + (gapMs + (jitterMs || 0)) + 'ms, shuffle=' + shuffle + ')\n' + rows.map((x) => x.msg).join('\n') + postBlockLine,
   }
 }
 

@@ -67,3 +67,21 @@ function conn() {
 export async function send(method, body) {
   return conn().sendPacket(method, body)
 }
+
+// ★ KICKMEM — openlink "차단하고 신고하기" 가 신고 성공 후 호출하는 LOCO 메서드.
+// APK 4차 분석 (2026-11-15): Lbly$d.h → Lfzc0$d.h → Lfzc0$d.e → Ljs50.Y → core/loco/d.M0 →
+// Lt131.W → Ltw30.f(yy50$a) 바디 조립. 필드 4개 확정: {li, c, mid, r}.
+// 봇 (오픈챗 일반 멤버) 가 호출하면 자기 block 리스트에만 등록되는 효과이지만, 서버가
+// "다수 유저의 block 집계" 를 Report 심사 큐에 가중치로 쓰는 것으로 강력 추정 → 임계 돌파 유리.
+// primary LOCO 세션에서만 호출 가능 (fanout 추가 계정은 LOCO 미지원).
+export async function kickMem(linkId, chatId, targetUserId, block = true) {
+  if (!ready()) throw new Error('LOCO 연결 없음 — KICKMEM 호출 불가 (primary 계정 LOCO 복구 필요)')
+  const { Long } = await import('bson')
+  const body = {
+    li: Long.fromString(String(linkId)),
+    c: Long.fromString(String(chatId)),
+    mid: Long.fromString(String(targetUserId)),
+    r: !!block,
+  }
+  return conn().sendPacket('KICKMEM', body)
+}

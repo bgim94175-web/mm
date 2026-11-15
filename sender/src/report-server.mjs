@@ -231,6 +231,12 @@ async function handle(req, res) {
     const r = await queue(function () { return OPEN.reportOne(b.ctx || b, String(b.category || 'SPAM')) })
     return send(res, 200, r)
   }
+  // "차단하고 신고하기" — Report POST + KICKMEM LOCO 체인
+  if (p === '/report/openchat-report-block' && req.method === 'POST') {
+    const b = await readBody(req)
+    const r = await queue(function () { return OPEN.reportAndBlock(b.ctx || b, String(b.category || 'VIOLENT')) })
+    return send(res, 200, r)
+  }
   if (p === '/report/openchat-dump' && req.method === 'POST') {
     // 실제 발사 X — 봇이 보낼 바이트 전체를 frida 포맷으로 돌려줌. 앱 캡쳐와 바이트 단위 diff 용.
     const b = await readBody(req)
@@ -247,8 +253,9 @@ async function handle(req, res) {
     const gapMs = Number(b.gapMs) >= 0 ? Number(b.gapMs) : 2500
     const jitterMs = Number(b.jitterMs) >= 0 ? Number(b.jitterMs) : 1500
     const shuffle = b.shuffle !== false
+    const postBlock = !!b.postBlock
     const r = await queue(function () {
-      return OPEN.fanout(b.ctx || b, String(b.category || 'VIOLENT'), userIds, { gapMs, jitterMs, shuffle })
+      return OPEN.fanout(b.ctx || b, String(b.category || 'VIOLENT'), userIds, { gapMs, jitterMs, shuffle, postBlock })
     })
     return send(res, 200, r)
   }
