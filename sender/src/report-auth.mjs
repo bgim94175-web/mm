@@ -50,10 +50,14 @@ export async function login(email, password, deviceType = 'tablet') {
   if (r && r.authenticated && r.credentials) {
     const uid = String(r.user_id || r.account_id || r.credentials.user_id || '')
     if (!uid) return { ok: false, message: '로그인 성공했지만 userId 가 비어 있음 (서버 응답 이상)' }
+    // ADID: APK 9차 발견 — s0.b() 가 모든 /c/fraud/* 요청에 Google Advertising ID 를 ADID
+    // 헤더로 자동 주입. 봇은 생략 중 → 서버가 "봇/비정상 클라이언트" 로 분류 가능성 큼.
+    // 계정별 고정 UUID v4 로 "각자 다른 디바이스" 시뮬레이션.
+    const adid = (prev && prev.adid) || randomUUID()
     const c = {
       oauthToken: r.credentials.access_token,
       refreshToken: r.credentials.refresh_token || '',
-      userId: uid, duuid, email, deviceType,
+      userId: uid, duuid, email, deviceType, adid,
     }
     await save(c)
     // 다계정 테이블에도 primary 로 자동 등록 (실패해도 primary 로그인 자체는 성공 처리)

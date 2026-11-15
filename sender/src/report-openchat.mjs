@@ -51,6 +51,16 @@ function normalizeCategory(c) {
 const GAP = 400
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// ADID fallback — cred 에 adid 없으면 duuid 로부터 안정적인 UUID 생성 (매 요청 같은 값).
+// Node 20 미만 호환성 확보.
+function adidFromDuuid(duuid) {
+  // duuid 는 64 hex. 앞 32자리만 써서 UUID v4 포맷으로 조립.
+  const s = String(duuid || '').replace(/-/g, '')
+  if (s.length < 32) return null
+  const h = s.slice(0, 32)
+  return h.slice(0, 8) + '-' + h.slice(8, 12) + '-4' + h.slice(13, 16) + '-a' + h.slice(17, 20) + '-' + h.slice(20, 32)
+}
+
 function authHeader(credOverride, opts = {}) {
   const c = credOverride || getCred()
   if (!c || !c.oauthToken || !c.duuid) throw new Error('로그인 안 됨 (cred 없음)')
@@ -60,6 +70,10 @@ function authHeader(credOverride, opts = {}) {
     'accept': 'application/json',
     'user-agent': 'KT/26.8.3 An/13 ko',
     'a': 'android/26.8.3/ko',
+    // ★ APK 9차 — s0.b() 가 모든 /c/fraud/* 요청에 ADID (Google Advertising ID) 주입.
+    // 봇이 그동안 생략 → 서버 "봇/비정상 클라이언트" 분류 또는 "같은 디바이스 중복 신고"
+    // 묶기 silent-reject 유력 원인. 계정별 고정 UUID v4 로 "각자 다른 디바이스" 시뮬레이션.
+    'adid': c.adid || adidFromDuuid(c.duuid) || '00000000-0000-4000-a000-000000000000',
   }
   if (opts.includeApkHeaders) {
     h['accept-language'] = 'ko'

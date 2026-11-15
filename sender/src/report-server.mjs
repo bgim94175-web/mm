@@ -483,9 +483,32 @@ const server = createServer(function (req, res) {
 
 async function bootAndListen() {
   try { await DB.init() } catch (e) { console.log('[db] init 실패: ' + (e && e.message)) }
+  // ★ APK 9차 — 기존 계정에 adid 없으면 백필 (한 번만, 계정별 고정)
+  try {
+    const { randomUUID } = await import('node:crypto')
+    const all = await DB.listAccounts().catch(() => [])
+    let n = 0
+    for (const a of all) {
+      if (!a.adid) {
+        await DB.saveAccount(Object.assign({}, a, { adid: randomUUID() })).catch(() => {})
+        n++
+      }
+    }
+    if (n) console.log('[adid] 백필 ' + n + '개 계정')
+  } catch (e) { console.log('[adid] 백필 실패: ' + (e && e.message)) }
   try {
     const prev = await AUTH.preload()
     if (prev && prev.oauthToken) {
+      // primary cred 에 adid 없으면 백필 (report_accounts 쪽에 있으면 거기 값 재사용)
+      if (!prev.adid) {
+        try {
+          const { randomUUID } = await import('node:crypto')
+          const primaryAcc = (await DB.listAccounts().catch(() => [])).find((a) => String(a.userId) === String(prev.userId))
+          const adid = (primaryAcc && primaryAcc.adid) || randomUUID()
+          await AUTH._setCredDirect(Object.assign({}, prev, { adid }))
+          console.log('[adid] primary 백필 adid=' + adid.slice(0, 8) + '…')
+        } catch (e) { console.log('[adid] primary 백필 실패: ' + (e && e.message)) }
+      }
       console.log('[auth] 저장된 토큰 로드됨 uid=' + (prev.userId || '-'))
       // Render Free tier 는 15분 비활동 시 instance sleep → 요청마다 cold-start.
       // 매번 LOCO.connect() 돌리면 LOGINLIST 가 반복 발사되어 서버가 anti-abuse 걸림(-328).

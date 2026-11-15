@@ -85,6 +85,9 @@ async function _coreLogin(email, password, deviceType, duuid) {
   if (r && r.authenticated && r.credentials) {
     const uid = String(r.user_id || r.account_id || r.credentials.user_id || '')
     if (!uid) return { ok: false, message: '로그인 성공했지만 userId 가 비어 있음' }
+    // ADID: APK 9차 — 각 계정별 고정 UUID v4 (saveAccount COALESCE 로 이미 있으면 유지)
+    const existingAcc = await DB.getAccount(uid).catch(() => null)
+    const adid = (existingAcc && existingAcc.adid) || randomUUID()
     await DB.saveAccount({
       userId: uid,
       oauthToken: r.credentials.access_token,
@@ -92,6 +95,7 @@ async function _coreLogin(email, password, deviceType, duuid) {
       duuid, email, deviceType,
       isPrimary: false,
       active: true,
+      adid,
     })
     pending = null
     return { ok: true, userId: uid, message: '계정 추가됨: ' + maskEmail(email) }

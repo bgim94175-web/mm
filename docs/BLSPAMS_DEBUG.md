@@ -97,6 +97,52 @@ yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), r
   b) 계정별 간격·지터 충분해서 어뷰징 필터 안 걸리게
   c) 메시지 원문 보존 (injectText 는 opt-in, 이미 rp-v44 에서 처리)
 
+### ★★★★★ 2026-11-15 9차 결정적 발견 — ADID 헤더 생략 ★★★★★
+
+**7차 fanout 실패 후 "또 큰 거 있다" 재분석. 발견**:
+
+`vde0` interceptor 는 `s0` 상속. `s0.b()` 가 **`k80.c(true) = Google Advertising ID`** 를 `ADID` 헤더로 모든 `/c/fraud/*` 요청에 **자동 주입**. OkHttp 실제 체인 = bi90(5개) + s0(**ADID**) = **총 6헤더**. 봇은 ADID 생략 중.
+
+**영향 가설**:
+- (가) 서버 anti-abuse 가 "ADID 없는 요청 = 봇/비정상 클라이언트" 로 분류 → silent-reject
+- (나) 여러 계정이 ADID 없이 쏘면 서버가 "같은 디바이스 중복 신고" 로 묶어 폐기 (fanout 자체 무의미)
+- 둘 다 가능. 8차 category 교정 후에도 처분 안 나오면 이게 결정적
+
+**봇 반영 (rp-v60)**:
+- `report_accounts.adid` 컬럼 추가 + `report_auth.adid` migration ALTER
+- 계정 로그인/저장 시 **UUID v4 자동 생성** (계정별 고정, 한 번 생성하고 재사용). 실제 ADID 도 기기 리셋 전까지 안 바뀌는 특성 모사
+- `report-openchat.mjs::authHeader()` 에 `adid: {cred.adid}` 주입
+- fallback — cred 에 adid 없으면 duuid 로부터 UUID 포맷 조립 (기존 계정 즉시 호환)
+- 부팅 시 **기존 계정 전부 adid 백필** (한 번만)
+
+**바이트 검증 결과**:
+```
+adid: aaaaaaaa-bbbb-4ccc-adddd-eeeeeeeeeeee  (cred.adid 있을 때)
+adid: abc123de-f456-4bc1-a3de-f456abc123de   (duuid fallback)
+```
+
+### 2026-11-15 9차 그 외 발견
+
+**ChatLogsReportResponse `url` 필드**: `ILLEGAL_FILMING` 신고 시 "불법촬영물 신고센터" 안내 페이지 URL. **2단계 플로우 아님**. 봇 무시 정당.
+
+**chatLogInfos / m 조건부 필드**:
+- `yud1.i` 의 실제 조립값:
+  - `attachment = chatLog.S()` = **원본 메시지 JSONObject** (링크카드/이미지)
+  - `referer = chatLog.h1()` = chatLog revision counter (int)
+  - `revision = chatLog.M.r()` = 긴글 조각 revision counter (int)
+- 봇은 전부 하드코딩 (attachment 없음, referer:0, revision:0)
+- `yud1.g` — primary chatLog 외에 **긴글 조각 N개** 를 iterate 해서 `yud1.a` (enc flag 기반 복호화) 로 **별개 로그 항목** 추가. 긴글 홍보 메시지는 1 chatLog → N 로그 항목
+
+**preparatory call 없음 확정** (`/c/fraud/{categories,policies,preview,init}` 전무).
+
+**ChatLogsReportParams 4필드 확정** (optional targetUserId 등 없음).
+
+**Content-Type**: Retrofit 기본 `application/json; charset=UTF8` — 봇의 `application/json` 과 미세 차이 (영향 미미 유력).
+
+**chatLogInfos string 인코딩**: org.json 기본 = 한글 UTF-8 raw + `"`·`\`·제어문자 escape. 봇 custom `jsonEscape` 와 **호환**.
+
+**HMAC / signature 없음 확정** (`signature`/`HMAC`/`X-Sign`/`sign`/`nonce` 전역 grep 전무).
+
 ### ★★★★★ 2026-11-15 8차 결정적 발견 — category 대소문자 ★★★★★
 
 **7차 이후 사용자 요청으로 "뭔가 다른게 있을 것" 재분석. yud1.d(Lrg61) enum→string 매핑 확정:**
