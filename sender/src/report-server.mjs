@@ -309,6 +309,19 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
+  // 대상 유저의 이용제한 감지 — 오픈프로필 fetch + MEMBER 상태 체인
+  if (p === '/report/target-status') {
+    const c = String(u.searchParams.get('c') || '')
+    const uid = String(u.searchParams.get('uid') || '')
+    if (!c || !uid) return send(res, 400, { ok: false, error: 'c/uid' })
+    if (!LOCO.ready()) {
+      try { await LOCO.connect() }
+      catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message ? e.message : e) }) }
+    }
+    const r = await queue(function () { return BROWSE.targetStatus(c, uid) })
+    return send(res, 200, r)
+  }
+
   // 멤버 한 명의 오픈프로필 링크 (MEMBER → pli → INFOLINK → lu)
   if (p === '/report/member-link') {
     const c = String(u.searchParams.get('c') || '')

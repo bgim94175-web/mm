@@ -244,6 +244,94 @@ export async function messagesByAuthor(chatId, authorId, cnt) {
   return { ok: true, count: filtered.length, chatId: base.chatId, authorId: target, messages: filtered, trace: base.trace }
 }
 
+// 대상 유저가 신고로 "오픈채팅 이용제한" 먹었는지 자동 감지. 처분 떨어지는 순간을 알아야
+// 다음 작전(추가 신고 vs 성공 vs 다른 카테고리)을 결정할 수 있다.
+//
+// 신호 3개를 모아서 LIMITED/ACTIVE/UNKNOWN 로 판정:
+//   (a) 오픈프로필 URL HTTP GET  — 이용제한 당하면 "운영정책을 위반한 채팅방" 류 문구나
+//                                   비정상 리다이렉트/404 가 뜸
+//   (b) LOCO MEMBER 쿼리         — 해당 방에서 그 유저의 상태 (nick/ptp/pli)
+//   (c) LOCO CHATINFO 응답       — 방 자체 상태 (링크 블라인드/삭제 여부)
+//
+// 이용제한 알림 팝업 문구는 docs/BLSPAMS_DEBUG.md 참고:
+//   "운영정책을 위반한 채팅방입니다. 이 경우 참여자는 채팅방에 입장할 수 없습니다"
+const LIMITED_PATTERNS = [
+  /운영정책.*위반/, /운영정책.*위배/, /이용제한/, /입장할 수 없/,
+  /차단된/, /사용불가/, /일시 중지/, /정지된/, /블라인드/,
+]
+
+async function fetchOpenProfile(url) {
+  if (!url) return null
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 7000)
+  try {
+    const r = await fetch(url, { method: 'GET', signal: ctrl.signal, redirect: 'follow' })
+    const text = await r.text().catch(() => '')
+    const matched = LIMITED_PATTERNS.find((re) => re.test(text))
+    // 서버 측 리다이렉트/에러 페이지 길이 — 정상 오픈프로필은 수십KB
+    return {
+      httpCode: r.status,
+      finalUrl: r.url,
+      bodyLength: text.length,
+      limited: !!matched,
+      matchedPattern: matched ? matched.toString() : null,
+      snippet: text.slice(0, 400),
+    }
+  } catch (e) {
+    return { httpCode: 0, err: String(e && e.message ? e.message : e) }
+  } finally { clearTimeout(t) }
+}
+
+export async function targetStatus(chatId, userId) {
+  if (!ready()) return { ok: false, text: 'LOCO 세션 없음' }
+  if (!chatId || !userId) return { ok: false, text: 'chatId · userId 필요' }
+  const result = { chatId: String(chatId), userId: String(userId), signals: {}, summary: 'UNKNOWN' }
+
+  // (b) + (일부 c): memberProfile 로 MEMBER + INFOLINK 체인
+  let profile = null
+  try {
+    profile = await memberProfile(chatId, userId)
+    result.signals.member = {
+      found: !!profile && (!!profile.nick || profile.ok !== false),
+      nick: profile && profile.nick || '',
+      ptp: profile && profile.ptp,
+      url: profile && profile.url || null,
+      text: profile && profile.text || '',
+    }
+  } catch (e) {
+    result.signals.member = { err: String(e && e.message ? e.message : e) }
+  }
+
+  // (a) 오픈프로필 URL fetch — 있을 때만
+  if (profile && profile.url) {
+    result.signals.openProfile = await fetchOpenProfile(profile.url)
+  } else {
+    result.signals.openProfile = { skipped: 'URL 없음 (일반 프로필)' }
+  }
+
+  // 판정:
+  //   LIMITED  — 오픈프로필에서 이용제한 문구 매치
+  //   ACTIVE   — 멤버 쿼리 성공 + 오픈프로필 정상 응답
+  //   UNKNOWN  — 그 외 (URL 없음/네트워크 오류 등)
+  const op = result.signals.openProfile || {}
+  const mem = result.signals.member || {}
+  if (op.limited) {
+    result.summary = 'LIMITED'
+    result.text = '★ 이용제한 감지: ' + (op.matchedPattern || '(패턴)')
+  } else if (op.httpCode === 404 || op.httpCode === 410) {
+    result.summary = 'LIMITED'
+    result.text = '★ 오픈프로필 ' + op.httpCode + ' — 삭제/비활성 가능'
+  } else if (op.httpCode === 200 && mem.found) {
+    result.summary = 'ACTIVE'
+    result.text = '멀쩡함 — 처분 아직 (nick=' + (mem.nick || '-') + ', url 접근 OK)'
+  } else {
+    result.summary = 'UNKNOWN'
+    result.text = '판정 불가 — member=' + JSON.stringify(mem).slice(0, 80) + ' · openProfile=' + JSON.stringify(op).slice(0, 80)
+  }
+  result.ok = true
+  return result
+}
+
 // CHATINFO 로 방 멤버 포함 상세. 열린 방의 공식 멤버 목록도 여기서.
 export async function roomInfo(chatId) {
   if (!ready()) return { ok: false, text: 'LOCO 세션 없음' }

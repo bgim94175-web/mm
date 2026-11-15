@@ -187,6 +187,14 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   <div class="row" style="margin-top:6px"><button onclick="ocMessageVerdict()" style="background:#5c1a3a;color:#fcc">📝 조작 반영 판정 — 서버가 조작 문장을 실제로 쓰는지 확인</button></div>
   <div class="row" style="margin-top:6px"><button onclick="ocDedupeVerdict()" style="background:#1a5c3a;color:#cfc">♻️ 1계정 1신고 확인 — 같은 (reporter, logId) 2연발</button></div>
 
+  <h2 style="margin-top:14px">🔍 처분 감지 (대상 상태 모니터)</h2>
+  <div class="me" style="margin-bottom:6px">대상 유저가 이용제한 먹었는지 자동 감지. "쐈다"를 넘어서 "걸렸다"를 확인하는 센서.</div>
+  <div class="row">
+    <button onclick="checkTargetStatus()">지금 체크 1회</button>
+    <button id="pollBtn" onclick="togglePollTarget()">자동 감시 시작 (30초 간격)</button>
+  </div>
+  <div id="targetStatusBox" class="me" style="margin-top:8px;padding:8px;border-radius:8px;background:#1b1b1b">대기…</div>
+
   <h2>raw LOCO (운영자 전용)</h2>
   <label>method</label>
   <input id="rawM" placeholder="PING · CHATINFO · WRITE ...">
@@ -686,6 +694,63 @@ async function ocDedupeVerdict() {
   lines.push('  • 둘 다 status=0 → 서버 dedupe 없음, 같은 계정이 N번 쏠 수 있음 (연속 발사 효과)')
   lines.push('  • 1번만 0, 2번째 거부 → dedupe 확정, 1계정 1신고 — fanout 외엔 임계치 올릴 길 없음')
   $('out').textContent = lines.join('\n')
+}
+
+// 🔍 처분 감지 — 대상 유저 상태 조회
+let pollTargetTimer = null
+async function checkTargetStatus() {
+  if (!pickedCtx || !pickedCtx.chatId || !pickedCtx.authorId) { $('targetStatusBox').textContent = '방 → 메시지 탭 먼저'; return }
+  const box = $('targetStatusBox'); box.textContent = '조회 중…'
+  try {
+    const r = await fetch('/report/target-status?c=' + encodeURIComponent(pickedCtx.chatId) + '&uid=' + encodeURIComponent(pickedCtx.authorId) + '&k=' + encodeURIComponent($('k').value))
+    const j = await r.json()
+    if (!j.ok) { box.textContent = '실패: ' + esc(j.text || JSON.stringify(j)); return }
+    const colorMap = { LIMITED: '#5c1a3a', ACTIVE: '#1a5c3a', UNKNOWN: '#3a3a1a' }
+    box.style.background = colorMap[j.summary] || '#1b1b1b'
+    const sigOP = j.signals && j.signals.openProfile || {}
+    const sigMem = j.signals && j.signals.member || {}
+    const lines = []
+    lines.push('[' + j.summary + '] ' + (j.text || ''))
+    lines.push('')
+    lines.push('── 오픈프로필 fetch ──')
+    if (sigOP.skipped) { lines.push('  ' + sigOP.skipped) }
+    else {
+      lines.push('  httpCode=' + sigOP.httpCode + (sigOP.limited ? ' ★제한감지' : '') + ' bodyLen=' + (sigOP.bodyLength || 0))
+      if (sigOP.matchedPattern) lines.push('  매치 패턴: ' + sigOP.matchedPattern)
+      if (sigOP.err) lines.push('  err: ' + sigOP.err)
+      if (sigOP.finalUrl && sigOP.finalUrl !== sigOP.url) lines.push('  → 리다이렉트: ' + sigOP.finalUrl)
+    }
+    lines.push('── LOCO MEMBER ──')
+    lines.push('  found=' + !!sigMem.found + ' nick="' + esc(sigMem.nick || '') + '" ptp=' + sigMem.ptp + (sigMem.url ? ' url=' + sigMem.url : ''))
+    if (sigMem.err) lines.push('  err: ' + sigMem.err)
+    lines.push('')
+    lines.push('⏱ ' + new Date().toLocaleString('ko-KR'))
+    box.textContent = lines.join('\n')
+  } catch (e) { box.textContent = '실패: ' + e.message }
+}
+function togglePollTarget() {
+  const btn = $('pollBtn')
+  if (pollTargetTimer) {
+    clearInterval(pollTargetTimer); pollTargetTimer = null
+    btn.textContent = '자동 감시 시작 (30초 간격)'
+    btn.style.background = ''
+    return
+  }
+  pollTargetTimer = setInterval(() => {
+    checkTargetStatus()
+    // LIMITED 감지되면 자동 중지 + 알림
+    if ($('targetStatusBox').textContent.indexOf('[LIMITED]') === 0) {
+      clearInterval(pollTargetTimer); pollTargetTimer = null
+      btn.textContent = '★ 처분 감지됨 — 다시 시작'
+      btn.style.background = '#c0392b'
+      try { if (Notification && Notification.permission === 'granted') new Notification('★ 처분 감지!', { body: $('targetStatusBox').textContent.split('\n')[0] }) } catch (e) {}
+      try { if (navigator.vibrate) navigator.vibrate([200, 100, 200]) } catch (e) {}
+    }
+  }, 30000)
+  checkTargetStatus()
+  btn.textContent = '감시 중… (30초 간격) · 눌러서 중지'
+  btn.style.background = '#1a5c3a'
+  try { if (Notification && Notification.permission === 'default') Notification.requestPermission() } catch (e) {}
 }
 
 async function ocFanout() {
