@@ -29,17 +29,19 @@ const TARGET_PATHS = ['/c/fraud/report/chatLogs']  // 여기 추가하면 다른
 const DUMP_ALL_HTTP = false                         // true 로 두면 모든 HTTP 요청 덤프
 const MAX_DUMP = 16384
 
+// frida `readByteArray()` 는 ArrayBuffer 를 돌려준다. ArrayBuffer 는 `.byteLength` 만 있고
+// `.length` 는 undefined — Math.min(undefined, N) = NaN → slice(0, NaN) = 빈 버퍼 → 모든
+// 요청이 매칭 실패. 반드시 byteLength 로 길이 읽어야 함.
 function looksLikeHttp(bytes) {
-  // 첫 몇 바이트가 HTTP method 로 시작하는지
-  if (bytes.length < 8) return false
-  const head = String.fromCharCode.apply(null, new Uint8Array(bytes.slice(0, 8)))
+  if (bytes.byteLength < 8) return false
+  const head = String.fromCharCode.apply(null, new Uint8Array(bytes, 0, 8))
   return /^(GET |POST |PUT |HEAD |DELETE |PATCH )/.test(head)
 }
 
 function matchesTarget(bytes) {
   if (DUMP_ALL_HTTP) return true
-  // 요청 라인 안에 TARGET_PATHS 중 하나가 들어가는지
-  const head = String.fromCharCode.apply(null, new Uint8Array(bytes.slice(0, Math.min(bytes.length, 512))))
+  const take = Math.min(bytes.byteLength, 512)
+  const head = String.fromCharCode.apply(null, new Uint8Array(bytes, 0, take))
   const firstLine = head.split('\r\n')[0] || ''
   for (const p of TARGET_PATHS) if (firstLine.indexOf(p) >= 0) return true
   return false

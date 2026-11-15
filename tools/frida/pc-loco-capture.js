@@ -37,6 +37,17 @@ function parseLocoHeader(ptr) {
   return { packetId, statusCode, method, bodyType, bodyLen }
 }
 
+// frida JS 런타임(QuickJS/V8)엔 Node Buffer 전역이 없음 — 수동 hex 로.
+function toHex(ab) {
+  let s = ''
+  const view = new Uint8Array(ab)
+  for (let i = 0; i < view.length; i++) {
+    const b = view[i]
+    s += (b < 16 ? '0' : '') + b.toString(16)
+  }
+  return s
+}
+
 function dumpPacket(dir, buf, len) {
   if (len < LOCO_HEADER) return
   // 패킷 앞 22바이트가 LOCO 헤더처럼 생겼는지 확인 (bodyType==0, method 가 ASCII 대문자)
@@ -49,7 +60,7 @@ function dumpPacket(dir, buf, len) {
 
   const hdr = parseLocoHeader(buf)
   if (hdr.bodyLen + LOCO_HEADER > len) return
-  const bodyHex = Buffer.from(buf.add(LOCO_HEADER).readByteArray(Math.min(hdr.bodyLen, MAX_DUMP))).toString('hex')
+  const bodyHex = toHex(buf.add(LOCO_HEADER).readByteArray(Math.min(hdr.bodyLen, MAX_DUMP)))
   console.log('LOCO_' + dir + ' pid=' + hdr.packetId + ' st=' + hdr.statusCode + ' method=' + hdr.method
     + ' bodyLen=' + hdr.bodyLen + ' body_bson=' + bodyHex)
 }

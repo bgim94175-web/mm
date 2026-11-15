@@ -22,22 +22,19 @@ export const CATEGORIES = [
 const GAP = 400
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// APK 26.8.3 OkHttp 공통 interceptor 가 매 요청마다 붙이는 헤더 — KakaoTalk Android 가
-// 실제 소켓에 실어내는 포맷과 바이트 단위로 같아야 한다. 필드 이름·순서·대소문자 그대로.
+// 라이브 성공 로그(2026-11-14 ★ 접수 category=SPAM http=200 status=0)가 나온 바로 그
+// 헤더 셋만 남긴다. `s:7` / `c:olk` / `accept-language` / `accept-encoding` / `charset=UTF-8`
+// 는 APK 재분석 없이 추측으로 넣었던 값 — 추측 헤더가 틀리면 멀쩡히 되던 신고까지 깨진다.
+// Fiddler/Android frida 캡쳐로 실제 KT CommonHeaderInterceptor 가 뱉는 값 확정되면 그때 추가.
 function authHeader() {
   const c = getCred()
   if (!c || !c.oauthToken) throw new Error('로그인 안 됨')
   return {
-    // KT CommonHeaderInterceptor 순서 그대로 (lowercase — Node fetch 가 어차피 소문자로 보냄)
     'authorization': c.oauthToken + '-' + c.duuid,
-    's': '7',                                   // 서비스 = kakao.com
-    'c': 'olk',                                 // 오픈링크 서비스
-    'a': 'android/26.8.3/ko',                   // app / version / lang
-    'user-agent': 'KT/26.8.3 An/13 ko',         // KT 포맷 (K T / 버전 A n / API lang)
-    'accept-language': 'ko',
+    'content-type': 'application/json',
     'accept': 'application/json',
-    'content-type': 'application/json;charset=UTF-8',
-    'accept-encoding': 'gzip',                  // OkHttp 기본값 — 명시해 두면 변동 없음
+    'user-agent': 'KT/26.8.3 An/13 ko',
+    'a': 'android/26.8.3/ko',
   }
 }
 
@@ -73,7 +70,9 @@ function logItem(lg, isPrimary) {
   const u = longStr(uRaw)
   const l = longStr(lg.logId)
   const s = Number(lg.sendAt) || 0
-  const t = Number(lg.type) || 1
+  // type==0 (시스템 메시지) 도 유효한 값이라 || 1 은 바이트 왜곡. 숫자로 파싱되면 그대로 유지.
+  const tn = Number(lg.type)
+  const t = Number.isFinite(tn) ? tn : 1
   const rawMsg = (isPrimary && lg.injectText && String(lg.injectText).trim())
     ? String(lg.injectText)
     : String(lg.message || '')
@@ -122,7 +121,8 @@ export function buildBody(ctx, category) {
   }
 }
 
-async function hit(body, { timeoutMs = 4000, host = HOST } = {}) {
+// extra 메시지 묶음은 바디가 커져 4초는 빡빡함. 신고가 느려도 abort 로 날아가지 않게 8초.
+async function hit(body, { timeoutMs = 8000, host = HOST } = {}) {
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), timeoutMs)
   // body 가 { _raw: "..." } 이면 raw JSON 문자열을 그대로, 아니면 stringify
@@ -158,6 +158,9 @@ async function hit(body, { timeoutMs = 4000, host = HOST } = {}) {
 // 한 카테고리로 한 번 쏘기
 export async function reportOne(ctx, category) {
   if (!ctx || !ctx.chatId || !ctx.logId || !ctx.authorId) return { ok: false, text: 'chatId · logId · authorId 필요' }
+  // linkId 누락 시 longStr('') → '0' 으로 송출됨. 오픈채팅 신고는 반드시 linkId 필요 — raw 호출
+  // (UI 가 pickRoom 안 거침) 에서 빠질 수 있음.
+  if (!ctx.linkId) return { ok: false, text: 'linkId 필요 (방을 pickRoom 으로 선택해야 자동 채워짐)' }
   const body = buildBody(ctx, category)
   const r = await hit(body)
   const ok = r.httpCode === 200 && r.status === 0

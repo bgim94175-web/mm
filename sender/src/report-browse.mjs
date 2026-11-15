@@ -213,12 +213,15 @@ export async function members(chatId) {
       const r = await send('MEMBER', { chatId: cid, memberIds: chunk })
       const arr = r && r.body && Array.isArray(r.body.members) ? r.body.members : []
       for (const m of arr) {
+        const pliStr = toIdString(m.pli)
         out.push({
           userId: toIdString(m.userId),
           nick: typeof m.nickName === 'string' ? m.nickName : '',
           ptp: Number(m.ptp) || 0,
-          pli: toIdString(m.pli),
-          hasOpenProfile: Number(m.ptp) === 16 && !!toIdString(m.pli),
+          pli: pliStr,
+          // `toIdString(null/0)` 이 '0' 을 뱉으므로 "0" 도 명시적으로 제외해야 함 — 안 그러면
+          // 일반 프로필 멤버에게도 OpenProfile 칩이 붙고 memberProfile() 조회에서 혼선.
+          hasOpenProfile: Number(m.ptp) === 16 && pliStr && pliStr !== '0',
         })
       }
     } catch (e) {

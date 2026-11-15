@@ -149,10 +149,7 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <input type="checkbox" id="ocBatch" style="width:auto;margin:0">
     <span>같은 저자의 다른 메시지도 함께 신고 (로드된 목록 중 자동 포함)</span>
   </label>
-  <div class="g">
-    <button class="p" onclick="ocOne()">선택 카테고리 집중 발사</button>
-    <button onclick="ocFireAll()">(참고용) 12종 뿌리기</button>
-  </div>
+  <div class="row"><button class="p" onclick="ocOne()">선택 카테고리 집중 발사</button></div>
   <div class="row"><button onclick="uVerdict()">u 판정 — 작성자(a)/대상(b)/없는번호(c) 3연발</button></div>
 
   <h2>raw LOCO (운영자 전용)</h2>
@@ -175,7 +172,12 @@ if (st.ocCat) $('ocCat').value = st.ocCat
 if (st.ocRepeat) $('ocRepeat').value = st.ocRepeat
 if (st.ocBatch) $('ocBatch').checked = true
 $('ocBatch').addEventListener('change', () => { save(); updatePickBanner() })
-$('msgCnt').addEventListener('change', () => { if (pickedRoom) loadMsgs() })
+// change 는 blur/enter 때만 뜨므로 input 이벤트 + 500ms debounce 로 자연스럽게.
+let __msgCntT = null
+$('msgCnt').addEventListener('input', () => {
+  clearTimeout(__msgCntT)
+  __msgCntT = setTimeout(() => { if (pickedRoom) loadMsgs() }, 500)
+})
 const save = () => localStorage.setItem('rp5', JSON.stringify({ k: $('k').value, email: $('email').value, uid: $('uid').value, txt: $('txt').value, c: $('c').value, l: $('l').value, mth: $('mth').value, rawM: $('rawM').value, rawB: $('rawB').value, ocCat: $('ocCat').value, ocRepeat: $('ocRepeat').value, ocBatch: $('ocBatch').checked }))
 const q = () => '?k=' + encodeURIComponent($('k').value)
 
@@ -545,7 +547,7 @@ async function uVerdict() {
   const actual = String(pickedCtx.authorId || '')
   const target = ($('uid').value || '').trim() || actual
   const fake = '1'
-  const category = ($('ocCat').value || 'SPAM').trim().toUpperCase()
+  const category = ($('ocCat').value || 'RIGHT').trim().toUpperCase()
   const ctxBase = ctxWithInject()
   const cases = [
     { tag: '(a) 작성자', u: actual },

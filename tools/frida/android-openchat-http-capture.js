@@ -78,7 +78,9 @@ Java.perform(function () {
       if (body !== null) {
         const buf = Buffer.$new()
         body.writeTo(buf)
-        const size = buf.size()
+        // okio.Buffer.size() 는 Java long. frida JS 로 받으면 2^53 초과 위험 — Number() 로 래핑.
+        // 신고 바디는 수 KB 라 실제로 넘을 일은 없지만 가드.
+        const size = Number(buf.size())
         console.log('--- body (' + size + ' bytes, content-type='
           + (body.contentType() !== null ? body.contentType().toString() : 'null') + ') ---')
 
@@ -88,8 +90,9 @@ Java.perform(function () {
         console.log(utf8)
 
         // 바이트 단위 비교용 hex (처음 2048 바이트만)
-        const arr = buf.readByteArray(Math.min(size, 2048))
-        console.log('--- body hex (' + Math.min(size, 2048) + ') ---')
+        const take = Math.min(size, 2048)
+        const arr = buf.readByteArray(take)
+        console.log('--- body hex (' + take + ') ---')
         console.log(hex(arr))
       } else {
         console.log('--- body: null ---')
