@@ -220,6 +220,10 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
     <button onclick="ocOne()">단일 계정 Report 만 (primary · 진단용)</button>
     <button class="p" onclick="ocReportBlock()" style="background:#c0392b">🚫 차단하고 신고 (primary · Report+KICKMEM)</button>
   </div>
+  <div class="row" style="margin-top:6px">
+    <button onclick="ocFireAll()" style="background:#5c3a7a;color:#dcf">▶ 전체 사유 순차 발사 (12종, 가드는 skip) — 테스트용</button>
+  </div>
+  <div class="me" style="margin-top:4px;color:#aba">⤷ 9개 허용 사유를 3개씩 묶어 순차 발사. §7 가드(RIGHT · YOUTH_UNSUITABLE · DIRECT방의 ILLEGAL_FILMING) 해당 사유는 'skip(가드)' 로 표시되고 발사되지 않음.</div>
 
   <div style="margin-top:14px;padding:12px;border:1px solid #e67e22;border-radius:12px;background:#2a1a0a">
     <div style="color:#fc9;font-weight:600;margin-bottom:6px">🔗 오픈링크(방 자체) 신고 (/c/fraud/report/link)</div>
@@ -1210,7 +1214,11 @@ async function uVerdict() {
 async function ocFireAll() {
   if (!pickedCtx || !pickedCtx.logId) { $('out').textContent = '방 → 메시지 탭 먼저'; return }
   const ctx = ctxWithInject()
-  $('out').textContent = '오픈챗 12종 발사 중… (~6초)' + (ctx.injectText ? ' [조작문:' + ctx.injectText.slice(0, 40) + ']' : '')
+  // v59-A D11 — UI 측 가드 사전 안내. 서버도 fireAll 안에서 다시 체크 (방어심).
+  const CATS = ['ILLEGAL','SPAM','SEXUAL','FRAUD','PROTECTCHILD','VIOLENT','PRIVACY','ETC','SUICIDE','RIGHT','YOUTH_UNSUITABLE','ILLEGAL_FILMING']
+  const guardSkipped = CATS.filter((c) => !uiCategoryGuard(ctx.roomType, c).ok)
+  const note = guardSkipped.length ? ' · 가드 skip 예상: ' + guardSkipped.join(', ') : ''
+  $('out').textContent = '오픈챗 전체 사유 발사 중…' + note + (ctx.injectText ? ' [조작문:' + ctx.injectText.slice(0, 40) + ']' : '')
   try {
     const j = await post('/report/openchat-fireAll', { ctx })
     $('out').textContent = j.text || JSON.stringify(j, null, 1)
