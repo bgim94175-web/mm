@@ -55,8 +55,16 @@ export async function init() {
       created_at  timestamptz NOT NULL DEFAULT now()
     )
   `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS report_loco_state (
+      id           integer PRIMARY KEY,
+      last_fail_at timestamptz,
+      last_err     text,
+      updated_at   timestamptz NOT NULL DEFAULT now()
+    )
+  `)
   backend = 'pg'
-  console.log('[db] Postgres 준비 완료 (Neon) — report_auth + report_accounts')
+  console.log('[db] Postgres 준비 완료 (Neon) — report_auth + report_accounts + report_loco_state')
 }
 
 export function usingPg() { return backend === 'pg' }
@@ -203,4 +211,44 @@ export async function markAccountUsed(userId, status) {
 export async function getAccount(userId) {
   const all = await listAccounts()
   return all.find((a) => String(a.userId) === String(userId)) || null
+}
+
+// ──────────── LOCO 쿨다운 상태 (report_loco_state) ────────────
+// cold-start 때마다 LOCO 재접속 시도해 서버가 anti-abuse 걸리는 걸 방지.
+// recordLocoFail() 하면 cooldownMin(기본 60분) 동안 preload 가 자동 접속 스킵.
+// clearLocoFail() 은 성공 시·수동 재연결 시 호출.
+const LOCO_FILE = join(DATA_DIR, 'loco-state.json')
+
+export async function loadLocoState() {
+  if (backend === 'pg') {
+    try {
+      const r = await pool.query('SELECT last_fail_at, last_err FROM report_loco_state WHERE id=1')
+      if (!r.rows.length) return null
+      const row = r.rows[0]
+      return { lastFailAt: row.last_fail_at ? new Date(row.last_fail_at).getTime() : 0, lastErr: row.last_err || '' }
+    } catch (e) { return null }
+  }
+  try { return JSON.parse(readFileSync(LOCO_FILE, 'utf8')) } catch (e) { return null }
+}
+
+export async function recordLocoFail(err) {
+  const msg = String(err || '').slice(0, 500)
+  if (backend === 'pg') {
+    await pool.query(
+      `INSERT INTO report_loco_state (id, last_fail_at, last_err, updated_at)
+       VALUES (1, now(), $1, now())
+       ON CONFLICT (id) DO UPDATE SET last_fail_at = now(), last_err = EXCLUDED.last_err, updated_at = now()`,
+      [msg],
+    )
+    return
+  }
+  try { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(LOCO_FILE, JSON.stringify({ lastFailAt: Date.now(), lastErr: msg })) } catch (e) {}
+}
+
+export async function clearLocoFail() {
+  if (backend === 'pg') {
+    try { await pool.query('DELETE FROM report_loco_state WHERE id=1') } catch (e) {}
+    return
+  }
+  try { writeFileSync(LOCO_FILE, '{}') } catch (e) {}
 }

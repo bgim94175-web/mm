@@ -32,9 +32,25 @@ function chatTypeName(t) {
 
 // 로그인 뒤 서버가 LOGINLIST 응답에 통째로 담아 준 방 목록
 export function rooms() {
-  if (!ready()) return { ok: false, text: 'LOCO 세션 없음' }
+  if (!ready()) {
+    return {
+      ok: false, loco: false, count: 0, rooms: [],
+      text: 'LOCO 세션 없음 — 방 목록은 LOGINLIST 에 담겨 오므로 LOCO 가 반드시 열려야 함.\n'
+        + '· 상단 "LOCO 재연결" 버튼 눌러보기 (성공하면 바로 뜸)\n'
+        + '· 그래도 실패면 폰 카카오톡 로그아웃 후 다시 "LOCO 재연결"\n'
+        + '· LOCO 없이도 "직접 chatId / linkId / logId 입력" 모드로 신고는 가능 (하단 raw LOCO / 메시지 신고 섹션)',
+    }
+  }
   const lr = loginResult()
   const chatDatas = (lr && Array.isArray(lr.chatDatas)) ? lr.chatDatas : []
+  if (chatDatas.length === 0) {
+    return {
+      ok: true, loco: true, count: 0, rooms: [],
+      text: '방 0개 — LOGINLIST 는 돌아왔는데 chatDatas 가 비었음. 신규 기기 등록이거나 서버가 partial snapshot 돌려줬을 가능성.\n'
+        + '· 폰 카카오톡에서 방 리스트 리프레시 → 봇 "LOCO 재연결"\n'
+        + '· 또는 chatId/linkId 를 직접 알고 있으면 하단 섹션에서 수동 입력',
+    }
+  }
   const items = chatDatas.map((c) => {
     const lastLog = c.l && typeof c.l === 'object' ? c.l : null
     const msg = lastLog && typeof lastLog.message === 'string' ? lastLog.message : ''

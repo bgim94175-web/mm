@@ -99,10 +99,21 @@ async function handle(req, res) {
     const b = await readBody(req)
     try {
       await LOCO.connect(b.deviceType)
+      await DB.clearLocoFail().catch(() => {})
       return send(res, 200, { ok: true, loco: 'O' })
     } catch (e) {
-      return send(res, 200, { ok: false, message: String(e && e.message ? e.message : e) })
+      const msg = String(e && e.message ? e.message : e)
+      await DB.recordLocoFail(msg).catch(() => {})
+      return send(res, 200, { ok: false, message: msg })
     }
+  }
+  // LOCO 쿨다운 상태 조회 — UI 안내용
+  if (p === '/report/loco-state') {
+    const s = await DB.loadLocoState().catch(() => null)
+    const cooldownMin = Math.max(5, Number(process.env.LOCO_RETRY_COOLDOWN_MIN) || 60)
+    const since = s && s.lastFailAt ? Math.floor((Date.now() - s.lastFailAt) / 60000) : null
+    const inCooldown = since != null && since < cooldownMin
+    return send(res, 200, { ok: true, cooldownMin, since, inCooldown, lastErr: s ? s.lastErr : '' })
   }
 
   if (p === '/report/login' && req.method === 'POST') {
@@ -392,8 +403,25 @@ async function bootAndListen() {
     const prev = await AUTH.preload()
     if (prev && prev.oauthToken) {
       console.log('[auth] 저장된 토큰 로드됨 uid=' + (prev.userId || '-'))
-      try { await LOCO.connect() ; console.log('[loco] 자동 재연결 OK') }
-      catch (e) { console.log('[loco] 자동 재연결 실패(계정 유효성 확인 필요): ' + (e && e.message)) }
+      // Render Free tier 는 15분 비활동 시 instance sleep → 요청마다 cold-start.
+      // 매번 LOCO.connect() 돌리면 LOGINLIST 가 반복 발사되어 서버가 anti-abuse 걸림(-328).
+      // DB 에 저장된 "최근 실패 시각" 이 쿨다운 안이면 자동 접속 skip (수동 재연결은 쿨다운 무시).
+      const cooldownMin = Math.max(5, Number(process.env.LOCO_RETRY_COOLDOWN_MIN) || 60)
+      const state = await DB.loadLocoState().catch(() => null)
+      const since = state && state.lastFailAt ? Math.floor((Date.now() - state.lastFailAt) / 60000) : Infinity
+      if (state && since < cooldownMin) {
+        console.log('[loco] 자동 재연결 skip — ' + since + '분 전 실패 (쿨다운 ' + cooldownMin + '분). 사유: ' + (state.lastErr || '-'))
+      } else {
+        try {
+          await LOCO.connect()
+          await DB.clearLocoFail().catch(() => {})
+          console.log('[loco] 자동 재연결 OK')
+        } catch (e) {
+          const msg = String(e && e.message ? e.message : e)
+          await DB.recordLocoFail(msg).catch(() => {})
+          console.log('[loco] 자동 재연결 실패(계정 유효성 확인 필요, ' + cooldownMin + '분 쿨다운 기록됨): ' + msg)
+        }
+      }
     } else {
       console.log('[auth] 저장된 토큰 없음 — 웹에서 로그인 필요')
     }
