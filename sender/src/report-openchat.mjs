@@ -9,6 +9,7 @@
 //                  배열 안 각 원소 = { u, m:{message,referer,revision}, s, t, l, scope, threadId? }
 //                  (Lyud1;->f + Lyud1;->j 가 조립)
 import { get as getCred } from './report-auth.mjs'
+import { randomUUID } from 'node:crypto'
 
 export const HOST = 'https://open.kakao.com'
 export const PATH = '/c/fraud/report/chatLogs'
@@ -22,19 +23,27 @@ export const CATEGORIES = [
 const GAP = 400
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// 라이브 성공 로그(2026-11-14 ★ 접수 category=SPAM http=200 status=0)가 나온 바로 그
-// 헤더 셋만 남긴다. `s:7` / `c:olk` / `accept-language` / `accept-encoding` / `charset=UTF-8`
-// 는 APK 재분석 없이 추측으로 넣었던 값 — 추측 헤더가 틀리면 멀쩡히 되던 신고까지 깨진다.
-// Fiddler/Android frida 캡쳐로 실제 KT CommonHeaderInterceptor 가 뱉는 값 확정되면 그때 추가.
+// APK 26.8.3 dex 분석 확정:
+//   dbg (CustomHeaderInterceptorFactory) + bi90 (KT 공통) + s0 (ADID) + vde0 (OpenLink)
+// 이 체인에서 openchat 요청에 실제로 붙는 헤더:
+//   - Authorization: oauthToken 만 (c4c0.i() — **`-duuid` 접미사 없음**).
+//     프로필 신고(/talk/profile25/report) 경로만 duuid 를 붙임 — 이 경로는 아님.
+//   - A: android/26.8.3/ko
+//   - C: 요청마다 랜덤 UUID v4 (correlation id — 서버 로그 추적용)
+//   - Accept-Language: ko
+//   - User-Agent: KT/26.8.3 An/13 ko  (Build.VERSION.RELEASE → Android 13)
+//   - ADID: Google Advertising ID — 봇은 안 보내는 게 추적 회피에 유리하므로 생략
 function authHeader() {
   const c = getCred()
   if (!c || !c.oauthToken) throw new Error('로그인 안 됨')
   return {
-    'authorization': c.oauthToken + '-' + c.duuid,
-    'content-type': 'application/json',
-    'accept': 'application/json',
-    'user-agent': 'KT/26.8.3 An/13 ko',
-    'a': 'android/26.8.3/ko',
+    'Authorization': c.oauthToken,
+    'A': 'android/26.8.3/ko',
+    'C': randomUUID(),
+    'Accept-Language': 'ko',
+    'User-Agent': 'KT/26.8.3 An/13 ko',
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
   }
 }
 
@@ -85,7 +94,10 @@ function logItem(lg, isPrimary) {
     '"l":' + l,
     '"scope":1',
   ]
-  if (lg.threadId != null && lg.threadId !== '' && String(lg.threadId) !== '0') {
+  // APK yud1.f() 는 `put("threadId", chatLog.p1())` 를 무조건 호출하고 null 일 때만 remove.
+  // primitive long 이면 0 이어도 `"threadId":0` 송출. 우리는 메시지 데이터에 threadId 가
+  // 명시된 경우에만 포함 (정의 안 되면 생략) — null-remove 와 바이트상 동일.
+  if (lg.threadId != null && lg.threadId !== '') {
     parts.push('"threadId":' + longStr(lg.threadId))
   }
   return '{' + parts.join(',') + '}'

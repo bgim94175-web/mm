@@ -37,6 +37,47 @@
 - 15분 대기 후 1.5초 간격으로 sr 0~5 발사 → 전부 `body.status=-301`
 - rate limit 이었으면 한두 개는 뚫렸어야 함 → 서버가 구조적으로 거부
 
+### ★★★ 2026-11-15 HTTP 요청 바이트 (헤더+바디) 완전 확정 (APK 26.8.3 dex 분석) ★★★
+
+**OlkAbuseReportApi (vbc0.java @ classes7.dex)**:
+- `@c(customInterceptorFactory = {vde0.class}, host = a.class)` — Retrofit 스타일
+- `host = a.class.create() = n9y.b0 = KAKAO_OPENLINK_HOST` → `https://open.kakao.com`
+- `@oye0("c/fraud/report/chatLogs")` → POST 경로
+- `@bg4 ChatLogsReportParams reportParams` → 바디
+
+**ChatLogsReportParams kotlinx serializer (ChatLogsReportParams.java $serializer)**:
+- 필드 선언 순서: `category(String) → linkId(long) → chatId(long) → chatLogInfos(String)`
+- 직렬화 함수(라인 175-180): `output.j(0, category); output.m(1, linkId); output.m(2, chatId); output.j(3, chatLogInfos)`
+- **우리 `buildBody()._raw` 바이트 완전 일치 (263 bytes, 라이브 성공 로그와 동일)**
+
+**chatLogInfos 조립 (yud1.f() + yud1.j() @ classes7.dex)** — JSONObject 로 조립 후 JSONArray.toString():
+```
+yud1.f(chatLog):  put u, m, s, t, l, scope, threadId  (put 후 null 이면 remove)
+yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), referer, revision
+```
+- primary 메시지 1개 바이트 ✓
+- `m` 내부 순서: `message → attachment → referer → revision` (attachment 없는 텍스트 메시지면 우리 코드와 동일)
+- `threadId: primitive long` — null 이면 생략, 0 이면 `"threadId":0` 송출
+
+**헤더 체인 (dbg → bi90 → s0 → vde0)**:
+| 헤더 | 값 | 비고 |
+|---|---|---|
+| Authorization | `{oauthToken}` | **`-duuid` 접미사 없음** (c4c0.i() 리턴) |
+| A | `android/26.8.3/ko` | `"android/" + ver + "/" + locale` |
+| C | `{UUID v4}` | 요청마다 랜덤 correlation ID |
+| Accept-Language | `ko` | `om50.a.a() = Locale.getDefault().getLanguage()` |
+| User-Agent | `KT/26.8.3 An/13 ko` | `KT/%s An/%s %s` (Build.VERSION.RELEASE) |
+| Content-Type | `application/json` | Retrofit 자동 |
+| Accept | `application/json` | Retrofit 자동 |
+| ADID | (옵션) | Google Advertising ID — 봇에선 생략 권장 |
+| X-VC | — | 로그인/signup 전용 (gun1), 신고엔 없음 |
+
+**rp-v34 반영**:
+- Authorization 에서 `-duuid` 제거 (라이브 로그는 `-duuid` 로도 200 받았지만 APK 기준으로 통일)
+- `C: UUID v4` 추가 (`randomUUID()` from node:crypto)
+- `Accept-Language: ko` 복원 (bi90 증거)
+- `threadId:'0'` 포함 조건 완화 (0 도 유효 Long)
+
 ### ★★★ 2026-11-15 category enum → 공식 분류 매핑 확정 (APK 26.8.3 resources.arsc) ★★★
 
 APK 254MB 를 gdown 으로 다운받아 `resources.arsc` 를 androguard 로 파싱,
