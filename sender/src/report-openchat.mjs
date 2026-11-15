@@ -353,7 +353,7 @@ export function dumpRequest(ctx, category, opts = {}) {
   }
 }
 
-async function hit(body, { timeoutMs = 8000, host = HOST, path = PATH, cred, retries = 1, includeApkHeaders = false } = {}) {
+async function hit(body, { timeoutMs = 8000, host = HOST, path = PATH, cred, retries = 1, includeApkHeaders = false, authStyle } = {}) {
   let last = null
   for (let attempt = 0; attempt <= retries; attempt++) {
     const ctrl = new AbortController()
@@ -362,7 +362,7 @@ async function hit(body, { timeoutMs = 8000, host = HOST, path = PATH, cred, ret
     try {
       const r = await fetch(host + path, {
         method: 'POST',
-        headers: authHeader(cred, { includeApkHeaders }),
+        headers: authHeader(cred, { includeApkHeaders, authStyle }),
         body: payload,
         signal: ctrl.signal,
       })
@@ -371,16 +371,29 @@ async function hit(body, { timeoutMs = 8000, host = HOST, path = PATH, cred, ret
       try { j = JSON.parse(text) } catch (e) {}
       const headers = {}
       try { for (const [k, v] of r.headers) headers[k] = v } catch (e) {}
+      // ★ v59-A new D10 — 응답 캡처: Status 모델의 모든 설명 필드를 그대로 끌어낸다.
+      //   message · reason: 서버의 거부/허용 설명
+      //   errUrl · errUrlLabel: 서버가 사용자에게 보여주라고 돌려준 "안내 링크"
+      //   url: "영수증" — 서버가 신고 처리 후 돌려주는 리소스. 저장 필수.
+      //   rawBody: JSON 파싱 전 전체 본문. 알 수 없는 필드 추적용.
       const result = {
         httpCode: r.status,
         status: j && typeof j.status === 'number' ? j.status : null,
         body: j,
+        message: j && typeof j.message === 'string' ? j.message : null,
+        reason: j && typeof j.reason === 'string' ? j.reason : null,
+        errUrl: j && typeof j.errUrl === 'string' ? j.errUrl : null,
+        errUrlLabel: j && typeof j.errUrlLabel === 'string' ? j.errUrlLabel : null,
+        url: j && typeof j.url === 'string' ? j.url : null,
+        rawBody: text,
         text: !j ? text.slice(0, 200) : null,
         sent: payload.slice(0, 400),
         headers,
         attempt,
       }
-      if (result.httpCode === 200 && result.status === 0) return result
+      // ★ v59-A new D8 — 성공 조건 완화: status === 0 → status >= 0 (§13 l8e1.b 기준).
+      // null 은 여전히 성공 아님. 타입 가드로 명시.
+      if (result.httpCode === 200 && typeof result.status === 'number' && result.status >= 0) return result
       last = result
       if (attempt < retries) await sleep(300 + Math.floor(Math.random() * 600))
     } catch (e) {
@@ -408,11 +421,50 @@ export async function reportOne(ctx, category, opts = {}) {
   try {
     const body = buildBody(ctx, category)
     const includeApkHeaders = opts.includeApkHeaders === false ? false : true
-    const r = await hit(body, { cred: opts.cred, retries: opts.retries != null ? opts.retries : 1, includeApkHeaders })
-    const ok = r.httpCode === 200 && r.status === 0
+    const r = await hit(body, {
+      cred: opts.cred,
+      retries: opts.retries != null ? opts.retries : 1,
+      includeApkHeaders,
+      authStyle: opts.authStyle,
+    })
+    // ★ v59-A new D8 — l8e1.b 기준 성공 판정 (status >= 0). null 은 성공 아님.
+    const ok = r.httpCode === 200 && typeof r.status === 'number' && r.status >= 0
+    // ★ v59-A new D10 — 응답 전체를 report_response 에 영구 기록. round/phase 는 opts 로 전달.
+    // 캡처 실패해도 요청 자체는 성공으로 기록 (DB 사이드이펙트는 보고값에 영향 X).
+    try {
+      await DB.saveReportResponse({
+        round: opts.round != null ? String(opts.round) : null,
+        phase: opts.phase != null ? String(opts.phase) : null,
+        logId: String(ctx.logId || ''),
+        http: r.httpCode,
+        status: r.status,
+        message: r.message,
+        reason: r.reason,
+        errUrl: r.errUrl,
+        errUrlLabel: r.errUrlLabel,
+        url: r.url,
+        rawBody: r.rawBody,
+      })
+    } catch (e) {
+      console.log('[report_response] save 실패: ' + (e && e.message ? e.message : e))
+    }
     return {
-      ok, category, sent: r.sent, http: r.httpCode, status: r.status, respBody: r.body, respHeaders: r.headers, text: r.text, attempt: r.attempt,
-      msg: (ok ? '★ 접수' : '실패') + ' category=' + category + ' http=' + r.httpCode + ' status=' + r.status + (r.err ? ' err=' + r.err : '') + (r.attempt ? ' (재시도#' + r.attempt + ')' : ''),
+      ok, category,
+      sent: r.sent,
+      http: r.httpCode, status: r.status,
+      // D10 — 응답 설명 필드 전부 surface
+      message: r.message, reason: r.reason,
+      errUrl: r.errUrl, errUrlLabel: r.errUrlLabel,
+      url: r.url, rawBody: r.rawBody,
+      respBody: r.body, respHeaders: r.headers,
+      text: r.text, attempt: r.attempt,
+      msg: (ok ? '★ 접수' : '실패') + ' category=' + category
+        + ' http=' + r.httpCode + ' status=' + r.status
+        + (r.message ? ' message="' + String(r.message).slice(0, 100) + '"' : '')
+        + (r.reason ? ' reason="' + String(r.reason).slice(0, 80) + '"' : '')
+        + (r.url ? ' url=' + r.url : '')
+        + (r.err ? ' err=' + r.err : '')
+        + (r.attempt ? ' (재시도#' + r.attempt + ')' : ''),
     }
   } finally {
     if (opts.adidMode) { if (saveAdid === undefined) delete process.env.REPORT_ADID_MODE; else process.env.REPORT_ADID_MODE = saveAdid }
