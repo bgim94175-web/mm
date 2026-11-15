@@ -304,13 +304,15 @@ function updatePickBanner() {
   }
   const nick = pickedCtx.nick || '(닉 없음)'
   const snippet = esc(String(pickedCtx.message || '').slice(0, 60)) || '(빈 글)'
-  const extra = (window.__msgs || []).filter((m) => String(m.authorId) === String(pickedCtx.authorId) && String(m.logId) !== String(pickedCtx.logId)).length
+  // 실제 ctxWithInject() 는 .slice(0, 4) 로 자르므로 배너 카운트도 동일하게 cap (실제 전체 N 도 괄호로 같이 표시).
+  const sameAll = (window.__msgs || []).filter((m) => String(m.authorId) === String(pickedCtx.authorId) && String(m.logId) !== String(pickedCtx.logId)).length
+  const extra = Math.min(sameAll, 4)
   const inject = ($('txt') && $('txt').value || '').trim()
   const injectAll = $('ocInjectAll') && $('ocInjectAll').checked && inject
   b.className = 'pickBanner'
   b.innerHTML = '선택됨 · <span class="k">' + esc(nick) + '</span> <span class="me">(uid ' + pickedCtx.authorId + ')</span>'
     + ' <span class="chip">주logId ' + pickedCtx.logId + '</span>'
-    + ($('ocBatch') && $('ocBatch').checked ? '<span class="chip">+ 같은 저자 ' + extra + '개 자동</span>' : '')
+    + ($('ocBatch') && $('ocBatch').checked ? '<span class="chip">+ 같은 저자 ' + extra + '개 자동' + (sameAll > extra ? ' (로드된 ' + sameAll + '개 중 상위 4개)' : '') + '</span>' : '')
     + (inject ? '<span class="chip" style="background:#5c1a3a;color:#fcc">📝 조작: ' + esc(inject.slice(0, 30)) + (injectAll ? ' (전체)' : ' (주1개)') + '</span>' : '')
     + '<div class="me" style="margin-top:4px">"' + snippet + '"</div>'
 }
