@@ -132,12 +132,19 @@ yud1.j(m):        put message(blank 면 생략), attachment(없으면 생략), r
 - 서버가 "N명의 reporter 가 각자 차단했다" 를 **별도 가중치**로 집계할 가능성 매우 큼
 - 지금 봇은 "N명이 신고했지만 1명만 차단했다" → **임계 가중치 낮음** 가능성
 
-**다계정 LOCO 구현 비용** (별도 작업으로 분리):
-- 각 계정별 `KakaoTalkClient` 인스턴스 유지
-- 각 계정별 LOCO 세션 (booking + checkin + LOGINLIST)
-- Render Free tier cold-start 와 쿨다운 충돌 관리
-- anti-abuse 리스크 상승 (여러 계정 동시 LOGINLIST → 서버 self-eviction 유발 가능)
-- 사용자 승인 필요
+**다계정 LOCO 구현 완료** (rp-v55):
+- `report-loco-pool.mjs` 신설 — `ensureSlot(userId)`·`kickMem(userId, ...)` lazy pattern
+- 각 계정별 `KakaoTalkClient` 인스턴스는 **fanout 호출 시점에 attach** → 쓰고 **idle 30분 후 자동 close**
+- `report_loco_pool_state` 테이블 (user_id PK) — 계정별 실패 시각·사유·쿨다운 60분
+- `fanout()` / `fanoutLink()` 의 `postBlock` 로직 변경: 각 계정이 chatLogs/link POST 성공 직후 **자기 slot 으로 KICKMEM** 호출
+- primary 계정은 기존 `report-loco.mjs` 상시 세션 사용, 나머지는 pool (lazy)
+- UI 에 "LOCO 풀 상태" 버튼 추가 — 각 계정별 세션 열림/idle/쿨다운 표시
+- env: `LOCO_RETRY_COOLDOWN_MIN` (기본 60) · `LOCO_POOL_IDLE_TTL_MIN` (기본 30)
+
+**anti-abuse 방어**:
+- 한 번에 1계정씩 순차 attach (fanout 자체 gap + jitter 가 세션 생성 간격도 결정)
+- 실패 시 그 계정만 쿨다운, 다른 계정은 영향 없음
+- K bot AGENTS.md 룰 준수: "실패하면 멈추고 자동 재로그인 금지"
 
 ### ~~2026-11-15 5차 분석 (틀린 결론 보존)~~
 

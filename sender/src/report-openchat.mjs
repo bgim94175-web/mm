@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto'
 import { get as getCred } from './report-auth.mjs'
 import * as DB from './report-db.mjs'
 import * as LOCO from './report-loco.mjs'
+import * as POOL from './report-loco-pool.mjs'
 
 export const HOST = 'https://open.kakao.com'
 export const PATH = '/c/fraud/report/chatLogs'
@@ -323,7 +324,30 @@ export async function reportLinkAndBlock({ linkId, chatId, targetUserId }, categ
   return result
 }
 
+// ★ 각 계정이 "자기 KICKMEM" 호출 — APK 6차 재현.
+// primary 는 report-loco.mjs (상시 세션), fanout 추가 계정은 report-loco-pool.mjs (lazy).
+// 반환: { ok, status, err, source:'primary'|'pool'|'skip' }
+async function _perAccountKickMem(account, linkId, chatId, targetUserId) {
+  if (!chatId || !targetUserId) return { ok: false, skipped: true, source: 'skip', reason: 'chatId/targetUserId 없음' }
+  // primary 는 상시 세션 사용 (report-loco)
+  const primaryAcc = await (async () => {
+    try { const list = await DB.listAccounts(); return list.find((a) => a.isPrimary) } catch (e) { return null }
+  })()
+  const isPrimary = primaryAcc && String(primaryAcc.userId) === String(account.userId)
+  try {
+    const r = isPrimary && LOCO.ready()
+      ? await LOCO.kickMem(linkId, chatId, targetUserId, true)
+      : await POOL.kickMem(account.userId, linkId, chatId, targetUserId, true)
+    const bs = r && r.body && typeof r.body.status === 'number' ? r.body.status : null
+    const ok = r && r.statusCode === 0 && (bs === 0 || bs == null)
+    return { ok, statusCode: r && r.statusCode, status: bs, source: isPrimary ? 'primary' : 'pool' }
+  } catch (e) {
+    return { ok: false, error: String(e && e.message ? e.message : e).slice(0, 180), source: isPrimary ? 'primary' : 'pool' }
+  }
+}
+
 // 활성 계정 전부로 /link 발사 (fanout). 필요 param = linkId. chatId/targetUserId 는 postBlock 때만 필요.
+// postBlock=true: 각 계정이 자기 report 성공 직후 자기 KICKMEM 호출 (APK UX 재현).
 export async function fanoutLink({ linkId, chatId, targetUserId }, category, userIds, { gapMs = 2500, jitterMs = 1500, shuffle = true, postBlock = false } = {}) {
   if (!linkId) return { ok: false, text: 'linkId 필요' }
   const cat = category || PROFANITY_CATEGORY
@@ -339,42 +363,44 @@ export async function fanoutLink({ linkId, chatId, targetUserId }, category, use
   }
   const rows = []
   let accepted = 0
+  let blockOk = 0, blockSkip = 0
   for (let i = 0; i < list.length; i++) {
     const a = list[i]
     const r = await reportLink(linkId, cat, { cred: a }).catch((e) => ({ ok: false, http: 0, status: null, err: String(e && e.message ? e.message : e) }))
     const status = r.status != null ? r.status : (r.err ? 'err' : '-')
-    try { await DB.markAccountUsed(a.userId, 'link http=' + r.http + ' status=' + status) } catch (e) {}
+    // 각 계정이 자기 KICKMEM (postBlock 시)
+    let blk = null
+    if (postBlock && r.ok) {
+      blk = await _perAccountKickMem(a, linkId, chatId, targetUserId)
+      if (blk.ok) blockOk++
+      else if (blk.skipped) blockSkip++
+    }
+    try { await DB.markAccountUsed(a.userId, 'link http=' + r.http + ' s=' + status + (blk ? ' kick=' + (blk.ok ? 'ok' : blk.skipped ? 'skip' : 'fail') : '')) } catch (e) {}
     rows.push({
       userId: a.userId,
       email: String(a.email || '').replace(/^(.).*(@.*)$/, '$1***$2'),
-      ok: !!r.ok, http: r.http, status: r.status, err: r.err || null,
-      msg: (r.ok ? '★' : '·') + ' ' + a.userId + ' http=' + r.http + ' status=' + status,
+      ok: !!r.ok, http: r.http, status: r.status, err: r.err || null, kick: blk,
+      msg: (r.ok ? '★' : '·') + ' ' + a.userId + ' http=' + r.http + ' s=' + status
+        + (blk ? ' / KICKMEM ' + (blk.ok ? '★' + blk.source : blk.skipped ? 'skip(' + blk.reason + ')' : 'fail ' + (blk.error || 's=' + blk.statusCode + '/b=' + blk.status)) : ''),
     })
     if (r.ok) accepted++
     if (i + 1 < list.length) await sleep(gapMs + Math.floor(Math.random() * (jitterMs || 0)))
   }
-  // postBlock: primary LOCO 가 열려있고 chatId/targetUserId 알려져 있으면 KICKMEM 1회
-  let postBlockResult = null
-  if (postBlock) {
-    if (!chatId || !targetUserId) {
-      postBlockResult = { ok: false, skipped: true, reason: 'chatId/targetUserId 없음' }
-    } else if (!LOCO.ready()) {
-      postBlockResult = { ok: false, skipped: true, reason: 'LOCO 세션 없음' }
-    } else {
-      try {
-        const r = await LOCO.kickMem(linkId, chatId, targetUserId, true)
-        const bs = r && r.body && typeof r.body.status === 'number' ? r.body.status : null
-        postBlockResult = { ok: r && r.statusCode === 0 && (bs === 0 || bs == null), statusCode: r && r.statusCode, status: bs }
-      } catch (e) {
-        postBlockResult = { ok: false, error: String(e && e.message ? e.message : e) }
-      }
-    }
-  }
-  const postBlockLine = postBlockResult
-    ? '\nKICKMEM(차단) ' + (postBlockResult.ok ? '★성공' : postBlockResult.skipped ? 'skip: ' + postBlockResult.reason : '실패 ' + (postBlockResult.error || 'st=' + postBlockResult.statusCode + ' b=' + postBlockResult.status))
+  // postBlock 요약 — 각 계정이 자기 KICKMEM 호출한 결과 집계
+  const postBlockSummary = postBlock
+    ? (chatId && targetUserId
+        ? { perAccount: true, blockOk, blockSkip, blockFail: list.length - blockOk - blockSkip, total: list.length }
+        : { skipped: true, reason: 'chatId/targetUserId 없음' })
+    : null
+  const postBlockLine = postBlockSummary
+    ? '\nKICKMEM 각 계정: ' + (postBlockSummary.skipped
+        ? 'skip (' + postBlockSummary.reason + ')'
+        : '★성공 ' + postBlockSummary.blockOk + '/' + postBlockSummary.total
+          + (postBlockSummary.blockSkip ? ' · skip ' + postBlockSummary.blockSkip : '')
+          + (postBlockSummary.blockFail ? ' · fail ' + postBlockSummary.blockFail : ''))
     : ''
   return {
-    ok: accepted > 0, accepted, total: list.length, rows, gapMs, jitterMs, shuffled: shuffle, postBlock: postBlockResult,
+    ok: accepted > 0, accepted, total: list.length, rows, gapMs, jitterMs, shuffled: shuffle, postBlock: postBlockSummary,
     text: '프로필 fanout 접수 ' + accepted + '/' + list.length + ' category=' + cat + ' linkId=' + linkId + '\n' + rows.map((x) => x.msg).join('\n') + postBlockLine,
   }
 }
@@ -425,41 +451,39 @@ export async function fanout(ctx, category, userIds, { gapMs = 2500, jitterMs = 
   }
   const rows = []
   let accepted = 0
+  let blockOk = 0, blockSkip = 0
   for (let i = 0; i < list.length; i++) {
     const a = list[i]
     const r = await reportOne(ctx, cat, { cred: a }).catch((e) => ({ ok: false, http: 0, status: null, err: String(e && e.message ? e.message : e) }))
     const status = r.status != null ? r.status : (r.err ? 'err' : '-')
-    try { await DB.markAccountUsed(a.userId, 'http=' + r.http + ' status=' + status) } catch (e) {}
+    // 각 계정이 자기 KICKMEM (postBlock 시) — APK UX 재현
+    let blk = null
+    if (postBlock && r.ok) {
+      blk = await _perAccountKickMem(a, ctx.linkId, ctx.chatId, ctx.authorId)
+      if (blk.ok) blockOk++
+      else if (blk.skipped) blockSkip++
+    }
+    try { await DB.markAccountUsed(a.userId, 'http=' + r.http + ' s=' + status + (blk ? ' kick=' + (blk.ok ? 'ok' : blk.skipped ? 'skip' : 'fail') : '')) } catch (e) {}
     rows.push({
       userId: a.userId,
       email: String(a.email || '').replace(/^(.).*(@.*)$/, '$1***$2'),
-      ok: !!r.ok, http: r.http, status: r.status, err: r.err || null,
-      msg: (r.ok ? '★' : '·') + ' ' + a.userId + ' http=' + r.http + ' status=' + status,
+      ok: !!r.ok, http: r.http, status: r.status, err: r.err || null, kick: blk,
+      msg: (r.ok ? '★' : '·') + ' ' + a.userId + ' http=' + r.http + ' s=' + status
+        + (blk ? ' / KICKMEM ' + (blk.ok ? '★' + blk.source : blk.skipped ? 'skip(' + blk.reason + ')' : 'fail ' + (blk.error || 's=' + blk.statusCode + '/b=' + blk.status)) : ''),
     })
     if (r.ok) accepted++
     if (i + 1 < list.length) await sleep(gapMs + Math.floor(Math.random() * (jitterMs || 0)))
   }
-  // postBlock: 모든 fanout Report 끝난 뒤 primary LOCO 세션으로 KICKMEM 1회 추가.
-  // "차단하고 신고하기" UX 를 흉내내는 신호. primary 가 LOCO 열려 있을 때만 작동.
-  let postBlockResult = null
-  if (postBlock) {
-    if (!LOCO.ready()) {
-      postBlockResult = { ok: false, skipped: true, reason: 'LOCO 세션 없음 (primary 복구 필요)' }
-    } else {
-      try {
-        const r = await LOCO.kickMem(ctx.linkId, ctx.chatId, ctx.authorId, true)
-        const bs = r && r.body && typeof r.body.status === 'number' ? r.body.status : null
-        postBlockResult = { ok: r && r.statusCode === 0 && (bs === 0 || bs == null), statusCode: r && r.statusCode, status: bs }
-      } catch (e) {
-        postBlockResult = { ok: false, error: String(e && e.message ? e.message : e) }
-      }
-    }
-  }
-  const postBlockLine = postBlockResult
-    ? '\nKICKMEM(차단) ' + (postBlockResult.ok ? '★성공' : postBlockResult.skipped ? 'skip: ' + postBlockResult.reason : '실패 ' + (postBlockResult.error || 'st=' + postBlockResult.statusCode + ' b=' + postBlockResult.status))
+  const postBlockSummary = postBlock
+    ? { perAccount: true, blockOk, blockSkip, blockFail: accepted - blockOk - blockSkip, total: list.length }
+    : null
+  const postBlockLine = postBlockSummary
+    ? '\nKICKMEM 각 계정: ★성공 ' + postBlockSummary.blockOk + '/' + postBlockSummary.total
+        + (postBlockSummary.blockSkip ? ' · skip ' + postBlockSummary.blockSkip : '')
+        + (postBlockSummary.blockFail > 0 ? ' · fail ' + postBlockSummary.blockFail : '')
     : ''
   return {
-    ok: accepted > 0, accepted, total: list.length, rows, gapMs, jitterMs, shuffled: shuffle, postBlock: postBlockResult,
+    ok: accepted > 0, accepted, total: list.length, rows, gapMs, jitterMs, shuffled: shuffle, postBlock: postBlockSummary,
     text: warmupNote + 'fanout 접수 ' + accepted + '/' + list.length + ' category=' + cat + ' (간격 ' + gapMs + '~' + (gapMs + (jitterMs || 0)) + 'ms, shuffle=' + shuffle + ')\n' + rows.map((x) => x.msg).join('\n') + postBlockLine,
   }
 }

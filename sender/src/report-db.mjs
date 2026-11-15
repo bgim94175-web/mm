@@ -63,8 +63,16 @@ export async function init() {
       updated_at   timestamptz NOT NULL DEFAULT now()
     )
   `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS report_loco_pool_state (
+      user_id      text PRIMARY KEY,
+      last_fail_at timestamptz,
+      last_err     text,
+      updated_at   timestamptz NOT NULL DEFAULT now()
+    )
+  `)
   backend = 'pg'
-  console.log('[db] Postgres 준비 완료 (Neon) — report_auth + report_accounts + report_loco_state')
+  console.log('[db] Postgres 준비 완료 (Neon) — report_auth + report_accounts + report_loco_state + report_loco_pool_state')
 }
 
 export function usingPg() { return backend === 'pg' }
@@ -213,11 +221,14 @@ export async function getAccount(userId) {
   return all.find((a) => String(a.userId) === String(userId)) || null
 }
 
-// ──────────── LOCO 쿨다운 상태 (report_loco_state) ────────────
+// ──────────── LOCO 쿨다운 상태 (report_loco_state · report_loco_pool_state) ────────────
+// primary = report_loco_state (한 행, id=1)
+// fanout 계정 pool = report_loco_pool_state (user_id PK)
 // cold-start 때마다 LOCO 재접속 시도해 서버가 anti-abuse 걸리는 걸 방지.
 // recordLocoFail() 하면 cooldownMin(기본 60분) 동안 preload 가 자동 접속 스킵.
 // clearLocoFail() 은 성공 시·수동 재연결 시 호출.
 const LOCO_FILE = join(DATA_DIR, 'loco-state.json')
+const LOCO_POOL_FILE = join(DATA_DIR, 'loco-pool-state.json')
 
 export async function loadLocoState() {
   if (backend === 'pg') {
@@ -251,4 +262,67 @@ export async function clearLocoFail() {
     return
   }
   try { writeFileSync(LOCO_FILE, '{}') } catch (e) {}
+}
+
+// ──────────── fanout 계정별 LOCO Pool 상태 (report_loco_pool_state) ────────────
+function _poolFileLoad() {
+  try { const o = JSON.parse(readFileSync(LOCO_POOL_FILE, 'utf8')); return (o && typeof o === 'object') ? o : {} } catch (e) { return {} }
+}
+function _poolFileSave(obj) {
+  try { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(LOCO_POOL_FILE, JSON.stringify(obj)) } catch (e) {}
+}
+
+export async function loadLocoPoolState(userId) {
+  const uid = String(userId)
+  if (backend === 'pg') {
+    try {
+      const r = await pool.query('SELECT last_fail_at, last_err FROM report_loco_pool_state WHERE user_id=$1', [uid])
+      if (!r.rows.length) return null
+      const row = r.rows[0]
+      return { lastFailAt: row.last_fail_at ? new Date(row.last_fail_at).getTime() : 0, lastErr: row.last_err || '' }
+    } catch (e) { return null }
+  }
+  const o = _poolFileLoad()
+  return o[uid] || null
+}
+
+export async function recordLocoPoolFail(userId, err) {
+  const uid = String(userId)
+  const msg = String(err || '').slice(0, 500)
+  if (backend === 'pg') {
+    try {
+      await pool.query(
+        `INSERT INTO report_loco_pool_state (user_id, last_fail_at, last_err, updated_at)
+         VALUES ($1, now(), $2, now())
+         ON CONFLICT (user_id) DO UPDATE SET last_fail_at = now(), last_err = EXCLUDED.last_err, updated_at = now()`,
+        [uid, msg],
+      )
+    } catch (e) {}
+    return
+  }
+  const o = _poolFileLoad()
+  o[uid] = { lastFailAt: Date.now(), lastErr: msg }
+  _poolFileSave(o)
+}
+
+export async function clearLocoPoolFail(userId) {
+  const uid = String(userId)
+  if (backend === 'pg') {
+    try { await pool.query('DELETE FROM report_loco_pool_state WHERE user_id=$1', [uid]) } catch (e) {}
+    return
+  }
+  const o = _poolFileLoad()
+  delete o[uid]
+  _poolFileSave(o)
+}
+
+export async function listLocoPoolFails() {
+  if (backend === 'pg') {
+    try {
+      const r = await pool.query('SELECT user_id, last_fail_at, last_err FROM report_loco_pool_state')
+      return r.rows.map((row) => ({ userId: row.user_id, lastFailAt: row.last_fail_at ? new Date(row.last_fail_at).getTime() : 0, lastErr: row.last_err || '' }))
+    } catch (e) { return [] }
+  }
+  const o = _poolFileLoad()
+  return Object.entries(o).map(([userId, v]) => ({ userId, ...v }))
 }

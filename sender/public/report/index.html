@@ -77,9 +77,13 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
 
   <div class="card">
     <h2 style="margin-top:0">계정 풀 (신고 fanout)</h2>
-    <div class="me" style="margin-bottom:8px">LOCO 세션은 primary 계정 1개만. 추가 계정들은 HTTP 신고 발사에만 쓰임. 각자 체크 해제하면 fanout 에서 제외.</div>
+    <div class="me" style="margin-bottom:8px">
+      <b>APK 6차 반영</b>: fanout + "완료 후 차단 추가" 켜 두면 <b>각 계정이 자기 KICKMEM</b> 호출 (lazy LOCO 세션, idle 30분 후 자동 close). 쿨다운 60분.
+      primary 는 상시 세션, 나머지는 fanout 발사 시 1계정씩 순차 open.
+    </div>
     <div id="accList" class="list"><div class="item">로딩…</div></div>
-    <div class="row" style="margin-top:10px"><button onclick="refreshAccounts()">계정 목록 새로고침</button><button class="p" onclick="openAddAccount()">+ 계정 추가</button></div>
+    <div class="row" style="margin-top:10px"><button onclick="refreshAccounts()">계정 목록 새로고침</button><button onclick="refreshLocoPool()">LOCO 풀 상태</button><button class="p" onclick="openAddAccount()">+ 계정 추가</button></div>
+    <div id="locoPoolBox" class="me hide" style="margin-top:10px;padding:10px;border:1px solid #333;border-radius:10px;background:#141414;white-space:pre-wrap;font-family:monospace;font-size:11px"></div>
     <div id="addAccBox" class="hide" style="margin-top:12px;padding:12px;border:1px dashed #3b6ef5;border-radius:10px">
       <div class="me" style="margin-bottom:6px">새 계정 로그인 — LOCO 세션은 안 열고 oauth 토큰만 획득</div>
       <label>아이디</label><input id="aa_email" autocomplete="username" placeholder="example@kakao.com">
@@ -690,6 +694,28 @@ function ctxWithInject() {
 }
 // ─── 계정 풀 관리 ───
 window.__accounts = []
+async function refreshLocoPool() {
+  const box = $('locoPoolBox')
+  box.classList.remove('hide'); box.textContent = '로딩…'
+  try {
+    const r = await fetch('/report/loco-pool/status' + q())
+    const j = await r.json()
+    if (!j.ok) { box.textContent = '실패: ' + (j.error || JSON.stringify(j)); return }
+    const lines = ['LOCO 풀 상태 (cooldown ' + j.cooldownMin + '분 · idle TTL ' + j.idleTtlMin + '분 · 열림 ' + j.totalOpen + '개)']
+    if (!j.items || !j.items.length) { lines.push('(세션/실패 기록 없음)'); box.textContent = lines.join('\n'); return }
+    for (const it of j.items) {
+      if (it.open) {
+        lines.push('🟢 ' + it.userId + '  열림 ' + it.openedAgoMin + '분  idle ' + it.idleMin + '분  ready=' + (it.ready ? 'Y' : 'N'))
+      } else if (it.inCooldown) {
+        lines.push('🔴 ' + it.userId + '  쿨다운 (' + it.sinceFailMin + '분 전 실패)  사유: ' + (it.lastErr || '-').slice(0, 80))
+      } else {
+        lines.push('⚪ ' + it.userId + '  미연결 (최근 실패 ' + (it.sinceFailMin != null ? it.sinceFailMin + '분 전' : '없음') + ')')
+      }
+    }
+    box.textContent = lines.join('\n')
+  } catch (e) { box.textContent = '실패: ' + e.message }
+}
+
 async function refreshAccounts() {
   const box = $('accList'); box.innerHTML = '<div class="item">로딩…</div>'
   try {

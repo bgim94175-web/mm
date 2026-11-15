@@ -5,6 +5,7 @@ import { join, extname } from 'node:path'
 import * as AUTH from './report-auth.mjs'
 import * as RH from './report-http.mjs'
 import * as LOCO from './report-loco.mjs'
+import * as POOL from './report-loco-pool.mjs'
 import * as MSG from './report-msg.mjs'
 import * as BROWSE from './report-browse.mjs'
 import * as OPEN from './report-openchat.mjs'
@@ -114,6 +115,33 @@ async function handle(req, res) {
     const since = s && s.lastFailAt ? Math.floor((Date.now() - s.lastFailAt) / 60000) : null
     const inCooldown = since != null && since < cooldownMin
     return send(res, 200, { ok: true, cooldownMin, since, inCooldown, lastErr: s ? s.lastErr : '' })
+  }
+  // 다계정 LOCO 풀 상태 — UI 상 각 fanout 계정의 세션 유무·쿨다운 표시
+  if (p === '/report/loco-pool/status') {
+    const r = await POOL.status().catch((e) => ({ error: String(e && e.message ? e.message : e) }))
+    return send(res, 200, Object.assign({ ok: true }, r))
+  }
+  if (p === '/report/loco-pool/close' && req.method === 'POST') {
+    const b = await readBody(req)
+    if (b && b.userId) { await POOL.closeSlot(String(b.userId)).catch(() => {}) }
+    else { POOL.closeAll() }
+    return send(res, 200, { ok: true })
+  }
+  if (p === '/report/loco-pool/reset-cooldown' && req.method === 'POST') {
+    const b = await readBody(req)
+    if (!b || !b.userId) return send(res, 400, { ok: false, error: 'userId' })
+    const r = await POOL.resetCooldown(String(b.userId))
+    return send(res, 200, r)
+  }
+  if (p === '/report/loco-pool/ensure' && req.method === 'POST') {
+    const b = await readBody(req)
+    if (!b || !b.userId) return send(res, 400, { ok: false, error: 'userId' })
+    try {
+      await POOL.ensureSlot(String(b.userId))
+      return send(res, 200, { ok: true, userId: String(b.userId) })
+    } catch (e) {
+      return send(res, 200, { ok: false, userId: String(b.userId), error: String(e && e.message ? e.message : e) })
+    }
   }
 
   if (p === '/report/login' && req.method === 'POST') {
@@ -474,6 +502,8 @@ async function bootAndListen() {
       console.log('[auth] 저장된 토큰 없음 — 웹에서 로그인 필요')
     }
   } catch (e) { console.log('[boot] preload 실패: ' + (e && e.message)) }
+  // 다계정 LOCO 풀 — idle 30분 넘은 세션 자동 close
+  try { POOL.startIdleSweep() } catch (e) {}
   server.listen(PORT, function () {
     console.log('report console on :' + PORT + ' / backend=' + DB.status().backend)
   })
