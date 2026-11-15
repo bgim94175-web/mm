@@ -113,6 +113,52 @@ function longStr(v) {
   return '0'
 }
 
+// ★ v59-A D2 — strict 치환 유틸. 조용한 치환 금지. 이전엔 longStr('abc') → '0' 으로
+// u:0 오타가 서버에 그대로 나가고 silent-accept 되는 경로가 있었다.
+// 이 유틸을 u/l/s/t/scope 에 걸어서 발사 전 throw 하면 400 으로 UI 에 반환된다.
+function strictInt(v, name) {
+  if (v === '' || v == null) throw new Error('strictInt ' + name + ' 누락')
+  const n = Number(v)
+  if (!Number.isInteger(n)) throw new Error('strictInt ' + name + ' 정수 아님: ' + JSON.stringify(v))
+  if (Math.abs(n) > 2147483647) throw new Error('strictInt ' + name + ' int32 범위 초과: ' + n)
+  return n
+}
+function strictLong(v, name) {
+  if (v == null) throw new Error('strictLong ' + name + ' 누락')
+  const s = String(v)
+  if (!/^\d{15,20}$/.test(s)) throw new Error('strictLong ' + name + ' 형식: ' + s)
+  return s
+}
+// §5 yud1.b — 500자 초과면 앞 500 + ' ...'. 비면 빈 문자열.
+function trunc500(s) {
+  const str = String(s == null ? '' : s)
+  if (!str.trim()) return ''
+  return str.length > 500 ? str.slice(0, 500) + ' ...' : str
+}
+
+// ★ v59-A §4 — assertShape: 발사 전 하드 게이트. 하나라도 실패하면 발사 중단.
+//   reportOne/fanout/fanoutLink/fireAll/dumpRequest 전부 이 게이트를 거친다.
+export function assertShape(o) {
+  if (!/^\d{15,20}$/.test(String(o.u))) throw new Error('u 형식: ' + o.u)
+  if (!/^\d{15,20}$/.test(String(o.l))) throw new Error('l 형식: ' + o.l)
+  for (const k of ['s', 't', 'scope']) {
+    if (!Number.isInteger(o[k])) throw new Error(k + ' int 아님: ' + JSON.stringify(o[k]))
+  }
+  const mk = Object.keys(o.m)
+  for (const k of mk) {
+    if (!['message', 'attachment', 'referer', 'revision'].includes(k)) throw new Error('m 키 ' + k)
+  }
+  const expectM = mk[0] === 'message' ? mk : ['message', ...mk]
+  if (JSON.stringify(mk) !== JSON.stringify(expectM)) throw new Error('m 키 순서/누락')
+  if (o.m.message != null && o.m.message.length > 504) throw new Error('500자 초과')
+  const expect = ['u', 'm', 's', 't', 'l', 'scope']
+  if (o.threadId != null) expect.push('threadId')
+  if (JSON.stringify(Object.keys(o)) !== JSON.stringify(expect)) {
+    throw new Error('키 순서/누락 expect=' + expect.join(',') + ' got=' + Object.keys(o).join(','))
+  }
+  return true
+}
+
 // sendAt 자동 보정 — 미래/30일 이전이면 지금으로
 function clampSendAt(raw) {
   const now = Math.floor(Date.now() / 1000)
