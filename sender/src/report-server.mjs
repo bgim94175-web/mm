@@ -141,7 +141,6 @@ async function handle(req, res) {
     return send(res, 200, { ok: true })
   }
 
-  // 메시지 신고 전에 LOCO 가 끊어져 있으면 한 번 재연결 시도
   if ((p === '/report/msg' || p === '/report/msgfire') && !LOCO.ready()) {
     try { await LOCO.connect() }
     catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message ? e.message : e) }) }
@@ -174,14 +173,12 @@ async function handle(req, res) {
     return send(res, 200, await next)
   }
 
-  // 운영자 전용 raw LOCO. POST {method, body}. body 안의 __long:["chatId","logId"] 로 Long 감싸기.
   if (p === '/report/raw' && req.method === 'POST') {
     const b = await readBody(req)
     const r = await queue(function () { return MSG.raw(String(b.method || ''), b.body || {}) })
     return send(res, 200, r)
   }
 
-  // BLSPAMS 바디 변형 탐색 — context 전부 받아서 여러 조합으로 쏜다
   if (p === '/report/msg-shape' && req.method === 'POST') {
     const b = await readBody(req)
     if (!LOCO.ready()) {
@@ -192,14 +189,12 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
-  // BLSPAMS 바디 BSON hex 덤프 — frida 캡처와 비교
   if (p === '/report/msg-dump' && req.method === 'POST') {
     const b = await readBody(req)
     const r = await MSG.dumpBytes(b)
     return send(res, 200, r)
   }
 
-  // 오픈채팅 HTTP 신고 — POST c/fraud/report/chatLogs 경로 탐색 + 발사
   if (p === '/report/openchat-hosts' && req.method === 'POST') {
     const b = await readBody(req)
     const r = await queue(function () { return OPEN.probeHosts(b) })
@@ -225,7 +220,6 @@ async function handle(req, res) {
     const r = await queue(function () { return OPEN.reportOne(b.ctx || b, String(b.category || 'SPAM')) })
     return send(res, 200, r)
   }
-  // 다계정 fanout — body { ctx, category, userIds?, gapMs?, jitterMs?, shuffle? }
   if (p === '/report/openchat-fanout' && req.method === 'POST') {
     const b = await readBody(req)
     const userIds = Array.isArray(b.userIds) ? b.userIds.map(String) : []
@@ -235,6 +229,13 @@ async function handle(req, res) {
     const r = await queue(function () {
       return OPEN.fanout(b.ctx || b, String(b.category || 'VIOLENT'), userIds, { gapMs, jitterMs, shuffle })
     })
+    return send(res, 200, r)
+  }
+
+  // ★ 신규: 진단 엔드포인트
+  if (p === '/report/openchat-diagnose' && req.method === 'POST') {
+    const b = await readBody(req)
+    const r = await queue(function () { return OPEN.diagnoseContentMatch(b.ctx || b, b.opts || {}) })
     return send(res, 200, r)
   }
 
@@ -266,7 +267,6 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
-  // 둘러보기 — 봇이 로그인한 방 목록
   if (p === '/report/rooms') {
     if (!LOCO.ready()) {
       try { await LOCO.connect() }
@@ -275,7 +275,6 @@ async function handle(req, res) {
     return send(res, 200, BROWSE.rooms())
   }
 
-  // 방 하나의 최근 메시지
   if (p === '/report/room-msgs') {
     const c = String(u.searchParams.get('c') || '')
     const cnt = Number(u.searchParams.get('cnt') || '15')
@@ -288,7 +287,6 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
-  // 방의 전체 멤버 목록 — 닉 검색용
   if (p === '/report/room-members') {
     const c = String(u.searchParams.get('c') || '')
     if (!c) return send(res, 400, { ok: false, error: 'c' })
@@ -300,7 +298,6 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
-  // 방 안에서 특정 저자의 메시지만
   if (p === '/report/author-msgs') {
     const c = String(u.searchParams.get('c') || '')
     const uid = String(u.searchParams.get('uid') || '')
@@ -314,7 +311,6 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
-  // 서버 측 백그라운드 감시 — PWA 닫거나 새로고침해도 계속 polling
   if (p === '/report/watch/list') {
     return send(res, 200, { ok: true, items: WATCH.list(), intervalMs: 30000 })
   }
@@ -327,7 +323,14 @@ async function handle(req, res) {
     const b = await readBody(req)
     if (!b.chatId || !b.userId) return send(res, 400, { ok: false, error: 'chatId/userId' })
     if (!LOCO.ready()) { try { await LOCO.connect() } catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message) }) } }
-    return send(res, 200, WATCH.add(String(b.chatId), String(b.userId)))
+    const autoFire = b.autoFire && b.autoFire.injectText && b.autoFire.linkId ? {
+      injectText: String(b.autoFire.injectText),
+      linkId: String(b.autoFire.linkId),
+      category: String(b.autoFire.category || 'VIOLENT'),
+      gapMs: Number(b.autoFire.gapMs) >= 0 ? Number(b.autoFire.gapMs) : 2500,
+      jitterMs: Number(b.autoFire.jitterMs) >= 0 ? Number(b.autoFire.jitterMs) : 1500,
+    } : null
+    return send(res, 200, WATCH.add(String(b.chatId), String(b.userId), { autoFire }))
   }
   if (p === '/report/watch/remove' && req.method === 'POST') {
     const b = await readBody(req)
@@ -338,7 +341,6 @@ async function handle(req, res) {
     return send(res, 200, WATCH.removeAll())
   }
 
-  // 대상 유저의 이용제한 감지 — 오픈프로필 fetch + MEMBER 상태 체인
   if (p === '/report/target-status') {
     const c = String(u.searchParams.get('c') || '')
     const uid = String(u.searchParams.get('uid') || '')
@@ -351,7 +353,6 @@ async function handle(req, res) {
     return send(res, 200, r)
   }
 
-  // 멤버 한 명의 오픈프로필 링크 (MEMBER → pli → INFOLINK → lu)
   if (p === '/report/member-link') {
     const c = String(u.searchParams.get('c') || '')
     const uid = String(u.searchParams.get('uid') || '')
