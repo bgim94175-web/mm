@@ -154,7 +154,7 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
   <input id="ocRepeat" inputmode="numeric" value="1" placeholder="기본 1회">
   <label style="display:flex;align-items:center;gap:8px;margin:12px 0 4px;color:#eee">
     <input type="checkbox" id="ocBatch" style="width:auto;margin:0">
-    <span>같은 저자의 다른 메시지도 함께 신고 (로드된 목록 중 자동 포함)</span>
+    <span>같은 저자의 다른 메시지도 함께 신고 — 카카오 공식 한도 5개(주1+추가4)까지만 자동</span>
   </label>
   <div class="row"><button class="p" onclick="ocOne()">선택 카테고리 집중 발사</button></div>
   <div class="row"><button onclick="uVerdict()">u 판정 — 작성자(a)/대상(b)/없는번호(c) 3연발</button></div>
@@ -502,10 +502,13 @@ function ctxWithInject() {
   const injectAll = $('ocInjectAll') && $('ocInjectAll').checked && inject
   const ctx = Object.assign({}, pickedCtx, inject ? { injectText: inject } : {})
   if ($('ocBatch') && $('ocBatch').checked && window.__msgs && pickedCtx && pickedCtx.authorId) {
+    // 카카오 앱 공식 UI 제한: 한 요청에 chatLogInfos 최대 5개. primary 1 + extra 4 까지.
+    // 서버도 같은 bound 를 체크할 가능성 높음 — 초과하면 전체 요청 거부 위험.
+    // 최신순(window.__msgs 가 이미 최신순) 중 같은 저자 상위 4개만.
     const sameAuthor = window.__msgs.filter((m) =>
       String(m.authorId) === String(pickedCtx.authorId) &&
       String(m.logId) !== String(pickedCtx.logId)
-    )
+    ).slice(0, 4)
     if (sameAuthor.length) {
       ctx.extraLogs = sameAuthor.map((m) => ({
         authorId: m.authorId,
