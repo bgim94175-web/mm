@@ -17,27 +17,20 @@ export const PATH = '/c/fraud/report/chatLogs'
 // chatId/userId 안 보냄 → LOGINLIST partial snapshot 상태에서도 linkId 만 알면 바로 발사.
 export const PATH_LINK = '/c/fraud/report/link'
 
-// ★ 2026-11-15 8차 분석 결정적 수정 — category 는 전부 **소문자 snake_case**.
-// yud1.d(Lrg61) enum → string 매핑 확정:
-//   violent · protect_child · youth_unsuitable · illegal_filming · right_infringement
-//   fraud · suicide · etc · privacy · illegal · sexual · spam
-// 이전 대문자 enum 은 서버가 unknown category 로 받아 silent-accept 후 심사 큐 drop 유력.
-// 이게 라이브 로그 72건 전부 status=0 인데 처분 無 였던 근본 원인.
+// ★ 2026-11-15 라이브 4-mode matrix 로 **대문자가 실제 wire format** 확정.
+// 8차 Fork 의 "소문자 snake_case 가 정답" 결론은 틀림 — yud1.d(Lrg61) 가 UI label
+// 또는 로컬 내부 표현을 반환했을 뿐 실제 kotlinx-serialization wire 는 enum class
+// name 그대로 (대문자). 봇이 그동안 보내던 대문자가 서버에선 맞음.
+// (4-mode matrix 결과: (1)(2) UPPER=status=0, (3)(4) lower=status=-500)
 export const CATEGORIES = [
-  'sexual', 'right_infringement', 'illegal_filming', 'fraud', 'spam', 'suicide',
-  'protect_child', 'violent', 'illegal', 'privacy', 'youth_unsuitable', 'etc',
+  'SEXUAL', 'RIGHT', 'ILLEGAL_FILMING', 'FRAUD', 'SPAM', 'SUICIDE',
+  'PROTECTCHILD', 'VIOLENT', 'ILLEGAL', 'PRIVACY', 'YOUTH_UNSUITABLE', 'ETC',
 ]
 
-// 욕설·혐오·폭력·증오발언 (resources.arsc 확정, 실제 wire 는 소문자).
-export const PROFANITY_CATEGORY = 'violent'
+// 욕설·혐오·폭력·증오발언 (resources.arsc + 라이브 matrix 확정).
+export const PROFANITY_CATEGORY = 'VIOLENT'
 
-// 레거시 대문자 호환 — 클라가 'VIOLENT' 보내도 자동 소문자화해서 송출
-const CATEGORY_NORMALIZE = {
-  VIOLENT: 'violent', SEXUAL: 'sexual', SPAM: 'spam', FRAUD: 'fraud',
-  ILLEGAL: 'illegal', PRIVACY: 'privacy', SUICIDE: 'suicide', ETC: 'etc',
-  RIGHT: 'right_infringement', PROTECTCHILD: 'protect_child',
-  ILLEGAL_FILMING: 'illegal_filming', YOUTH_UNSUITABLE: 'youth_unsuitable',
-}
+// 소문자 입력 자동 대문자화 (debug 호환)
 const CATEGORY_UPPER = {
   violent: 'VIOLENT', sexual: 'SEXUAL', spam: 'SPAM', fraud: 'FRAUD',
   illegal: 'ILLEGAL', privacy: 'PRIVACY', suicide: 'SUICIDE', etc: 'ETC',
@@ -48,15 +41,15 @@ function normalizeCategory(c) {
   const s = String(c || '').trim()
   let wire = s
   if (CATEGORIES.includes(s)) wire = s
-  else if (CATEGORY_NORMALIZE[s]) wire = CATEGORY_NORMALIZE[s]
+  else if (CATEGORY_UPPER[s.toLowerCase()]) wire = CATEGORY_UPPER[s.toLowerCase()]
   else {
-    const low = s.toLowerCase()
-    wire = CATEGORIES.includes(low) ? low : PROFANITY_CATEGORY
+    const up = s.toUpperCase()
+    wire = CATEGORIES.includes(up) ? up : PROFANITY_CATEGORY
   }
-  // 환경변수 REPORT_CATEGORY_CASE=upper 면 대문자 enum 포맷으로 (이전 상태)
-  // 디폴트는 소문자 snake_case (8차 분석 결과)
-  if (String(process.env.REPORT_CATEGORY_CASE || '').toLowerCase() === 'upper') {
-    return CATEGORY_UPPER[wire] || wire.toUpperCase()
+  // 환경변수 REPORT_CATEGORY_CASE=lower 로 debug 시 소문자 snake_case 로 전환 (실험용)
+  if (String(process.env.REPORT_CATEGORY_CASE || '').toLowerCase() === 'lower') {
+    const low = Object.entries(CATEGORY_UPPER).find(([, u]) => u === wire)
+    if (low) return low[0]
   }
   return wire
 }
