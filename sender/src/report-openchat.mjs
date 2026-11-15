@@ -567,10 +567,11 @@ export async function fanoutLink({ linkId, chatId, targetUserId }, category, use
     if (r.ok) accepted++
     if (i + 1 < list.length) await sleep(gapMs + Math.floor(Math.random() * (jitterMs || 0)))
   }
-  // postBlock 요약 — 각 계정이 자기 KICKMEM 호출한 결과 집계
+  // v59-A D12 — blockFail 을 accepted 기준으로. 이전엔 list.length 기준이라
+  // 접수 실패한 계정까지 "차단 실패" 로 세서 UI 가 과대 보고했다. fanout() 쪽과 동일.
   const postBlockSummary = postBlock
     ? (chatId && targetUserId
-        ? { perAccount: true, blockOk, blockSkip, blockFail: list.length - blockOk - blockSkip, total: list.length }
+        ? { perAccount: true, blockOk, blockSkip, blockFail: accepted - blockOk - blockSkip, total: list.length }
         : { skipped: true, reason: 'chatId/targetUserId 없음' })
     : null
   const postBlockLine = postBlockSummary
