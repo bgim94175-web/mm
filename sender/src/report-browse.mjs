@@ -137,6 +137,14 @@ export async function messages(chatId, cnt) {
     const A = BigInt(a.logId || '0'), B = BigInt(b.logId || '0')
     return A > B ? -1 : A < B ? 1 : 0
   })
+  // 진단: CHATINFO 가 준 최신 id vs 실제로 받아온 로그의 최신 id/시각
+  const newest = items[0] || null
+  console.log('[msgs] c=' + chatId
+    + ' chatinfoMax=' + (maxLogId ? toIdString(maxLogId) : 'null')
+    + ' got=' + items.length
+    + ' newestLog=' + (newest ? newest.logId : '-')
+    + ' newestAt=' + (newest ? new Date((newest.sendAt || 0) * 1000).toISOString() : '-')
+    + ' trace=' + trace.join('|'))
   return { ok: true, count: items.length, chatId: String(chatId), messages: items, trace }
 }
 
