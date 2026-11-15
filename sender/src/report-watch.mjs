@@ -1,26 +1,19 @@
-// 서버 측 처분 감시 — 클라이언트가 PWA 닫거나 새로고침해도 Render 프로세스가
-// 30초마다 targetStatus() 돌림. LIMITED 감지하면 메모리에 시각 기록해두고 다음 접속 때
-// 그대로 전달. Render Free 는 15분 idle 이면 sleep 되지만, 이 poller 자체가 트래픽을
-// 유발해서 활성 상태 유지됨.
-//
-// 메모리 Map 이라 Render 재배포/재시작 시 리스트 날아감 — 영속이 필요하면 DB 로 승격.
+// 서버 측 처분 감시 + 새 메시지 감지 시 자동 신고.
 import * as BROWSE from './report-browse.mjs'
+import * as OPEN from './report-openchat.mjs'
 
 const INTERVAL_MS = 30000
-const watches = new Map()   // key = chatId+'::'+userId → row
+const watches = new Map()
 let timer = null
 
 function keyOf(chatId, userId) { return String(chatId) + '::' + String(userId) }
 
 export function list() {
   return Array.from(watches.values()).map((w) => ({
-    chatId: w.chatId,
-    userId: w.userId,
-    addedAt: w.addedAt,
-    lastCheck: w.lastCheck,
-    summary: w.result && w.result.summary || null,
-    text: w.result && w.result.text || '',
-    limitedAt: w.limitedAt || null,
+    chatId: w.chatId, userId: w.userId, addedAt: w.addedAt, lastCheck: w.lastCheck,
+    summary: w.result && w.result.summary || null, confident: w.result && w.result.confident || false,
+    text: w.result && w.result.text || '', limitedAt: w.limitedAt || null,
+    autoFire: w.autoFire || null, lastFiredLogId: w.lastFiredLogId || null,
     signals: w.result && w.result.signals || null,
   }))
 }
@@ -29,30 +22,26 @@ export function status(chatId, userId) {
   const w = watches.get(keyOf(chatId, userId))
   if (!w) return { watching: false }
   return {
-    watching: true,
-    addedAt: w.addedAt,
-    lastCheck: w.lastCheck,
-    summary: w.result && w.result.summary || null,
-    text: w.result && w.result.text || '',
-    limitedAt: w.limitedAt || null,
+    watching: true, addedAt: w.addedAt, lastCheck: w.lastCheck,
+    summary: w.result && w.result.summary || null, confident: w.result && w.result.confident || false,
+    text: w.result && w.result.text || '', limitedAt: w.limitedAt || null,
+    autoFire: w.autoFire || null, lastFiredLogId: w.lastFiredLogId || null,
     signals: w.result && w.result.signals || null,
   }
 }
 
-export function add(chatId, userId) {
+export function add(chatId, userId, opts = {}) {
   const k = keyOf(chatId, userId)
   if (!watches.has(k)) {
     watches.set(k, {
-      chatId: String(chatId),
-      userId: String(userId),
-      addedAt: Date.now(),
-      lastCheck: null,
-      result: null,
-      limitedAt: null,
+      chatId: String(chatId), userId: String(userId),
+      addedAt: Date.now(), lastCheck: null, result: null, limitedAt: null,
+      autoFire: opts.autoFire || null, lastFiredLogId: null,
     })
+  } else if (opts.autoFire) {
+    watches.get(k).autoFire = opts.autoFire
   }
   startTimer()
-  // 처음 추가되면 즉시 한 번 체크해서 baseline 확보
   setImmediate(() => tickOne(watches.get(k)).catch(() => {}))
   return { ok: true, count: watches.size }
 }
@@ -81,9 +70,34 @@ async function tickOne(w) {
     const r = await BROWSE.targetStatus(w.chatId, w.userId)
     w.lastCheck = Date.now()
     w.result = r
-    if (r && r.summary === 'LIMITED' && !w.limitedAt) {
+    if (r && r.summary === 'LIMITED' && r.confident && !w.limitedAt) {
       w.limitedAt = Date.now()
-      console.log('[watch] ★ LIMITED 감지 c=' + w.chatId + ' uid=' + w.userId + ' "' + (r.text || '') + '"')
+      console.log('[watch] ★ LIMITED 확정 c=' + w.chatId + ' uid=' + w.userId + ' "' + (r.text || '') + '"')
+    }
+    if (w.autoFire && w.autoFire.injectText && w.autoFire.linkId && !w.limitedAt) {
+      try {
+        const msgs = await BROWSE.messagesByAuthor(w.chatId, w.userId, 5)
+        const newest = (msgs && msgs.messages && msgs.messages[0]) || null
+        if (newest && newest.logId && String(newest.logId) !== String(w.lastFiredLogId)) {
+          w.lastFiredLogId = String(newest.logId)
+          const ctx = {
+            chatId: w.chatId, linkId: w.autoFire.linkId,
+            logId: String(newest.logId), authorId: String(w.userId),
+            sendAt: newest.sendAt || Math.floor(Date.now() / 1000),
+            message: newest.message || '',
+            type: newest.type != null ? newest.type : 1,
+            injectText: w.autoFire.injectText,
+          }
+          const cat = w.autoFire.category || OPEN.PROFANITY_CATEGORY
+          console.log('[watch] autoFire c=' + w.chatId + ' uid=' + w.userId + ' logId=' + w.lastFiredLogId + ' cat=' + cat)
+          const res = await OPEN.fanout(ctx, cat, [], {
+            gapMs: w.autoFire.gapMs || 2500, jitterMs: w.autoFire.jitterMs || 1500, shuffle: true,
+          })
+          console.log('[watch] autoFire 결과: ' + (res.text || '').split('\n')[0])
+        }
+      } catch (e) {
+        console.log('[watch] autoFire err c=' + w.chatId + ': ' + (e && e.message))
+      }
     }
   } catch (e) {
     w.lastCheck = Date.now()
@@ -93,6 +107,5 @@ async function tickOne(w) {
 
 async function tick() {
   if (!watches.size) return
-  // 병렬이지만 LOCO 세션 1개라 큐잉은 report-server.mjs 가 처리.
   await Promise.all(Array.from(watches.values()).map(tickOne))
 }
