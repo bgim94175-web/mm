@@ -309,25 +309,29 @@ export async function targetStatus(chatId, userId) {
     result.signals.openProfile = { skipped: 'URL 없음 (일반 프로필)' }
   }
 
-  // 판정:
-  //   LIMITED  — 오픈프로필에서 이용제한 문구 매치
-  //   ACTIVE   — 멤버 쿼리 성공 + 오픈프로필 정상 응답
-  //   UNKNOWN  — 그 외 (URL 없음/네트워크 오류 등)
+  // 판정 (정밀도 개선):
+  //   LIMITED  — body 패턴 매치일 때만. confident=true
+  //   ACTIVE   — 오픈프로필 200 + 멤버 found. confident=true
+  //   UNKNOWN  — 404/410 은 삭제일 수도, 일시 오류일 수도 있으므로 LIMITED 로 단정하지 않음
   const op = result.signals.openProfile || {}
   const mem = result.signals.member || {}
+  let confident = false
   if (op.limited) {
     result.summary = 'LIMITED'
-    result.text = '★ 이용제한 감지: ' + (op.matchedPattern || '(패턴)')
-  } else if (op.httpCode === 404 || op.httpCode === 410) {
-    result.summary = 'LIMITED'
-    result.text = '★ 오픈프로필 ' + op.httpCode + ' — 삭제/비활성 가능'
+    result.text = '★ 이용제한 감지 (body 패턴): ' + (op.matchedPattern || '(패턴)')
+    confident = true
   } else if (op.httpCode === 200 && mem.found) {
     result.summary = 'ACTIVE'
     result.text = '멀쩡함 — 처분 아직 (nick=' + (mem.nick || '-') + ', url 접근 OK)'
+    confident = true
+  } else if (op.httpCode === 404 || op.httpCode === 410) {
+    result.summary = 'UNKNOWN'
+    result.text = '오픈프로필 ' + op.httpCode + ' — 삭제/비활성 또는 일시 오류 (단정 불가)'
   } else {
     result.summary = 'UNKNOWN'
     result.text = '판정 불가 — member=' + JSON.stringify(mem).slice(0, 80) + ' · openProfile=' + JSON.stringify(op).slice(0, 80)
   }
+  result.confident = confident
   result.ok = true
   return result
 }
