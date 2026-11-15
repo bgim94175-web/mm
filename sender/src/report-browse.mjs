@@ -145,6 +145,37 @@ export async function messages(chatId, cnt) {
     + ' newestLog=' + (newest ? newest.logId : '-')
     + ' newestAt=' + (newest ? new Date((newest.sendAt || 0) * 1000).toISOString() : '-')
     + ' trace=' + trace.join('|'))
+
+  // === 임시 진단: SYNCMSG 가 cur 를 어떻게 해석하는지 (최신순 vs 과거순) 확정용 ===
+  // 받은 것 중 최신(haveMax)·0·max-1e6 세 cur 로 쏴 보고 각각 뭘 주는지 로그로.
+  try {
+    if (maxLogId) {
+      const haveMax = newest ? L.fromString(newest.logId) : null
+      const maxStr = toIdString(maxLogId)
+      const minus = (() => { try { return L.fromString(String(BigInt(maxStr) - 1000000n)) } catch (e) { return null } })()
+      const tries = [['haveMax', haveMax], ['zero', L.fromNumber(0)], ['max-1e6', minus]]
+      for (const [tag, cur] of tries) {
+        if (!cur) { console.log('[syncdiag] ' + tag + '=skip'); continue }
+        try {
+          const r = await send('SYNCMSG', { chatId: cid, cur, cnt: n, max: maxLogId })
+          const body = r && r.body
+          const arr = body && Array.isArray(body.chatLogs) ? body.chatLogs : null
+          let line = '[syncdiag] c=' + chatId + ' cur=' + tag + ' st=' + (r && r.statusCode)
+            + ' keys=[' + (body ? Object.keys(body).join(',') : '') + ']'
+          if (arr) {
+            const f = arr[0], l = arr[arr.length - 1]
+            line += ' n=' + arr.length
+              + ' firstLog=' + (f ? toIdString(f.logId) : '-') + '@' + (f ? new Date((Number(f.sendAt) || 0) * 1000).toISOString() : '-')
+              + ' lastLog=' + (l ? toIdString(l.logId) : '-') + '@' + (l ? new Date((Number(l.sendAt) || 0) * 1000).toISOString() : '-')
+          } else {
+            line += ' chatLogs=NA'
+          }
+          console.log(line)
+        } catch (e) { console.log('[syncdiag] ' + tag + ' ERR ' + (e && e.message ? e.message : e)) }
+      }
+    }
+  } catch (e) { console.log('[syncdiag] outer ERR ' + (e && e.message ? e.message : e)) }
+
   return { ok: true, count: items.length, chatId: String(chatId), messages: items, trace }
 }
 
