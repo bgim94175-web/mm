@@ -75,8 +75,29 @@ export async function init() {
       updated_at   timestamptz NOT NULL DEFAULT now()
     )
   `)
+  // ★ v59-A new D10 — 응답 전체 영구 기록. message/reason/url 이 서버의 유일한 설명이므로
+  // 해석 없이 원문 그대로 보존. UI가 round/phase 를 전달하지 않으면 null 로 기록.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS report_response (
+      id            bigserial PRIMARY KEY,
+      round         text,
+      phase         text,
+      log_id        text,
+      http          integer,
+      status        integer,
+      message       text,
+      reason        text,
+      err_url       text,
+      err_url_label text,
+      url           text,
+      raw_body      text,
+      created_at    timestamptz NOT NULL DEFAULT now()
+    )
+  `)
+  try { await pool.query('CREATE INDEX IF NOT EXISTS report_response_created_idx ON report_response (created_at DESC)') } catch (e) {}
+  try { await pool.query('CREATE INDEX IF NOT EXISTS report_response_log_idx ON report_response (log_id)') } catch (e) {}
   backend = 'pg'
-  console.log('[db] Postgres 준비 완료 (Neon) — report_auth + report_accounts + report_loco_state + report_loco_pool_state')
+  console.log('[db] Postgres 준비 완료 (Neon) — report_auth + report_accounts + report_loco_state + report_loco_pool_state + report_response')
 }
 
 export function usingPg() { return backend === 'pg' }
@@ -349,6 +370,87 @@ export async function clearLocoPoolFail(userId) {
   const o = _poolFileLoad()
   delete o[uid]
   _poolFileSave(o)
+}
+
+// ──────────── v59-A new D10 — report_response (응답 캡처) ────────────
+// 신고 응답의 message · reason · errUrl · url · rawBody 를 해석 없이 전부 보존.
+// UI 에서 라운드/페이즈별로 모아 보고 쿼터·중복·검증 거부 설명을 직접 읽을 수 있게.
+const RESP_FILE = join(DATA_DIR, 'report-response.jsonl')
+
+export async function saveReportResponse(rec) {
+  if (!rec) return
+  const row = {
+    round: rec.round != null ? String(rec.round) : null,
+    phase: rec.phase != null ? String(rec.phase) : null,
+    logId: rec.logId != null ? String(rec.logId) : null,
+    http: Number.isFinite(Number(rec.http)) ? Number(rec.http) : null,
+    status: Number.isFinite(Number(rec.status)) ? Number(rec.status) : null,
+    message: rec.message != null ? String(rec.message) : null,
+    reason: rec.reason != null ? String(rec.reason) : null,
+    errUrl: rec.errUrl != null ? String(rec.errUrl) : null,
+    errUrlLabel: rec.errUrlLabel != null ? String(rec.errUrlLabel) : null,
+    url: rec.url != null ? String(rec.url) : null,
+    rawBody: rec.rawBody != null ? String(rec.rawBody).slice(0, 4000) : null,
+  }
+  if (backend === 'pg') {
+    try {
+      await pool.query(
+        `INSERT INTO report_response
+         (round, phase, log_id, http, status, message, reason, err_url, err_url_label, url, raw_body, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now())`,
+        [row.round, row.phase, row.logId, row.http, row.status, row.message, row.reason, row.errUrl, row.errUrlLabel, row.url, row.rawBody],
+      )
+    } catch (e) {
+      console.log('[report_response] pg insert 실패: ' + (e && e.message ? e.message : e))
+    }
+    return
+  }
+  // 파일 백엔드 — JSONL. 재배포 때 날아가지만 라운드 중에는 보존.
+  try {
+    mkdirSync(DATA_DIR, { recursive: true })
+    const line = JSON.stringify({ ...row, createdAt: new Date().toISOString() }) + '\n'
+    const { appendFileSync } = await import('node:fs')
+    appendFileSync(RESP_FILE, line)
+  } catch (e) {}
+}
+
+// 최근 응답 조회 — UI 가 round/phase/log_id 로 좁혀서 읽을 수 있게.
+export async function listReportResponses({ limit = 100, logId, round, phase } = {}) {
+  const lim = Math.max(1, Math.min(1000, Number(limit) || 100))
+  if (backend === 'pg') {
+    try {
+      const wh = []
+      const args = []
+      if (logId) { args.push(String(logId)); wh.push('log_id = $' + args.length) }
+      if (round) { args.push(String(round)); wh.push('round = $' + args.length) }
+      if (phase) { args.push(String(phase)); wh.push('phase = $' + args.length) }
+      const where = wh.length ? 'WHERE ' + wh.join(' AND ') : ''
+      args.push(lim)
+      const r = await pool.query(
+        `SELECT id, round, phase, log_id, http, status, message, reason, err_url, err_url_label, url, raw_body, created_at
+         FROM report_response ${where} ORDER BY created_at DESC LIMIT $${args.length}`,
+        args,
+      )
+      return r.rows.map((row) => ({
+        id: row.id, round: row.round, phase: row.phase, logId: row.log_id,
+        http: row.http, status: row.status,
+        message: row.message, reason: row.reason,
+        errUrl: row.err_url, errUrlLabel: row.err_url_label, url: row.url,
+        rawBody: row.raw_body, createdAt: row.created_at,
+      }))
+    } catch (e) { return [] }
+  }
+  try {
+    const { readFileSync } = await import('node:fs')
+    const txt = readFileSync(RESP_FILE, 'utf8')
+    const rows = txt.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l) } catch (e) { return null } }).filter(Boolean)
+    const filtered = rows.filter((r) =>
+      (!logId || String(r.logId) === String(logId)) &&
+      (!round || String(r.round) === String(round)) &&
+      (!phase || String(r.phase) === String(phase))
+    )
+    return filtered.slice(-lim).reverse()
+  } catch (e) { return [] }
 }
 
 export async function listLocoPoolFails() {
