@@ -67,7 +67,10 @@ function clampSendAt(raw) {
   return Math.floor(n)
 }
 
-// ★ 모든 항목에 injectText·authorIdOverride·logIdOverride 적용
+// ★ 모든 항목에 (선택) injectText·authorIdOverride·logIdOverride 적용
+// 2026-11-15: injectText 는 **명시적 enableInject 플래그가 true 일 때만** 사용.
+// 라이브 로그 분석 결과 조작문 주입 시 http=200/status=0 로 silent-accept 되지만 서버가
+// u·l 조합으로 DB 원문 cross-check 해서 실제 제재 안 거는 패턴 강력 의심. 기본은 원문.
 function logItem(lg, isPrimary, ctx) {
   const uRaw =
     (lg.authorIdOverride != null && lg.authorIdOverride !== '') ? lg.authorIdOverride
@@ -83,10 +86,11 @@ function logItem(lg, isPrimary, ctx) {
   const tn = Number(lg.type)
   const t = Number.isFinite(tn) && tn >= 0 ? tn : 1
 
+  const injectEnabled = (lg.enableInject === true) || (ctx && ctx.enableInject === true)
   let rawMsg = ''
-  if (lg.injectText != null && String(lg.injectText).trim()) {
+  if (injectEnabled && lg.injectText != null && String(lg.injectText).trim()) {
     rawMsg = String(lg.injectText)
-  } else if (ctx && ctx.injectText != null && String(ctx.injectText).trim()) {
+  } else if (injectEnabled && ctx && ctx.injectText != null && String(ctx.injectText).trim()) {
     rawMsg = String(ctx.injectText)
   } else {
     rawMsg = String(lg.message || '')
@@ -173,7 +177,9 @@ export async function reportOne(ctx, category, opts = {}) {
   if (!ctx || !ctx.chatId || !ctx.logId || !ctx.authorId) return { ok: false, text: 'chatId · logId · authorId 필요' }
   if (!ctx.linkId) return { ok: false, text: 'linkId 필요 (방을 pickRoom 으로 선택해야 자동 채워짐)' }
   const body = buildBody(ctx, category)
-  const r = await hit(body, { cred: opts.cred, retries: opts.retries != null ? opts.retries : 1, includeApkHeaders: !!opts.includeApkHeaders })
+  // APK bi90 가 모든 요청에 Accept-Language·C(UUID) 를 붙임 → 기본 true. opts.includeApkHeaders===false 로 끌 수 있음.
+  const includeApkHeaders = opts.includeApkHeaders === false ? false : true
+  const r = await hit(body, { cred: opts.cred, retries: opts.retries != null ? opts.retries : 1, includeApkHeaders })
   const ok = r.httpCode === 200 && r.status === 0
   return {
     ok, category, sent: r.sent, http: r.httpCode, status: r.status, respBody: r.body, respHeaders: r.headers, text: r.text, attempt: r.attempt,
@@ -255,9 +261,9 @@ export async function diagnoseContentMatch(ctx, opts = {}) {
   const cred = opts.cred
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-  const a = await reportOne({ ...ctx, injectText: '' }, cat, { cred })
+  const a = await reportOne({ ...ctx, injectText: '', enableInject: false }, cat, { cred })
   await sleep(1200 + Math.floor(Math.random() * 800))
-  const b = await reportOne({ ...ctx, injectText: injected }, cat, { cred })
+  const b = await reportOne({ ...ctx, injectText: injected, enableInject: true }, cat, { cred })
   await sleep(1200)
 
   const verdict = (() => {

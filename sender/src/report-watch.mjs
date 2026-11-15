@@ -74,19 +74,23 @@ async function tickOne(w) {
       w.limitedAt = Date.now()
       console.log('[watch] ★ LIMITED 확정 c=' + w.chatId + ' uid=' + w.userId + ' "' + (r.text || '') + '"')
     }
-    if (w.autoFire && w.autoFire.injectText && w.autoFire.linkId && !w.limitedAt) {
+    // autoFire: 새 메시지 감지되면 자동 신고. injectText 는 w.autoFire.enableInject 가 true 일 때만 실제 사용.
+    // 기본은 원문 그대로 (서버 cross-check silent-reject 회피).
+    if (w.autoFire && w.autoFire.linkId && !w.limitedAt) {
       try {
         const msgs = await BROWSE.messagesByAuthor(w.chatId, w.userId, 5)
         const newest = (msgs && msgs.messages && msgs.messages[0]) || null
         if (newest && newest.logId && String(newest.logId) !== String(w.lastFiredLogId)) {
           w.lastFiredLogId = String(newest.logId)
+          const enableInject = w.autoFire.enableInject === true
           const ctx = {
             chatId: w.chatId, linkId: w.autoFire.linkId,
             logId: String(newest.logId), authorId: String(w.userId),
             sendAt: newest.sendAt || Math.floor(Date.now() / 1000),
             message: newest.message || '',
             type: newest.type != null ? newest.type : 1,
-            injectText: w.autoFire.injectText,
+            injectText: enableInject ? w.autoFire.injectText : '',
+            enableInject,
           }
           const cat = w.autoFire.category || OPEN.PROFANITY_CATEGORY
           console.log('[watch] autoFire c=' + w.chatId + ' uid=' + w.userId + ' logId=' + w.lastFiredLogId + ' cat=' + cat)

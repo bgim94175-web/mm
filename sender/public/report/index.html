@@ -120,9 +120,14 @@ pre{margin-top:16px;padding:12px;border-radius:10px;background:#1b1b1b;font-size
 
   <div id="pickBanner" class="pickBanner empty">아직 아무 메시지도 선택 안 됨 — 위에서 방 → 메시지 순서로 고르면 아래 신고 섹션이 활성화됨</div>
 
-  <div style="border:1px solid #3b6ef5;border-radius:12px;padding:12px;margin:14px 0;background:#0e1a2d">
-    <div style="color:#9cf;font-weight:600;margin-bottom:6px">📝 신고 본문 조작 (심사자 눈에 보이는 문장)</div>
-    <input id="txt" placeholder="비우면 실제 원문 그대로. 문장 넣으면 카카오 심사자료에 이 문장이 '저 유저가 쓴 글' 로 올라감.">
+  <div style="border:1px solid #c0392b;border-radius:12px;padding:12px;margin:14px 0;background:#2a1414">
+    <div style="color:#fca;font-weight:600;margin-bottom:6px">📝 신고 본문 조작 (실험용 · 기본 OFF)</div>
+    <div class="me" style="color:#fcc;margin-bottom:8px">⚠ 라이브 로그상 조작문 주입 시 http=200/status=0 로 <b>접수는 되지만 실제 제재가 안 걸림</b>. 서버가 u·l 조합으로 DB 원문 cross-check 할 가능성 매우 큼. 켜지 말 것 — 아래 체크박스로 명시 opt-in 해야 작동.</div>
+    <label style="display:flex;align-items:center;gap:8px;color:#fca;font-size:13px">
+      <input type="checkbox" id="ocEnableInject" style="width:auto;margin:0">
+      <span><b>조작문 사용</b> (체크해야 아래 input 이 서버로 전송됨)</span>
+    </label>
+    <input id="txt" style="margin-top:8px" placeholder="(조작문 사용 체크 안 하면 무시됨)">
     <label style="display:flex;align-items:center;gap:8px;margin-top:10px;color:#eee;font-size:13px">
       <input type="checkbox" id="ocInjectAll" style="width:auto;margin:0">
       <span>같은 저자 extra 메시지도 전부 이 문장으로 교체 (OFF 권장 — 복붙 신고로 보일 수 있음)</span>
@@ -552,11 +557,13 @@ async function pickMember(userId) {
   } catch (e) { $('msgList').innerHTML = '<div class="item">실패: ' + esc(e.message) + '</div>' }
 }
 function ctxWithInject() {
-  // "주입할 문장" 이 비어있지 않으면 원문 대신 그걸 서버에 보냄 (심사 자료 조작).
-  // 기본: primary 메시지에만 적용. ocInjectAll 체크 시 extra 메시지도 전부 교체.
+  // "주입할 문장" 이 비어있지 않아도 ocEnableInject 체크해야만 실제로 보냄 (기본 OFF).
+  // 라이브 로그상 조작문 주입 시 http=200/status=0 로 silent-accept 되지만 실제 제재가 안 걸림
+  // → 서버가 u·l 조합으로 DB 원문 cross-check 하는 걸로 강력 추정. 기본은 원문.
+  const injectEnabled = !!($('ocEnableInject') && $('ocEnableInject').checked)
   const inject = ($('txt').value || '').trim()
-  const injectAll = $('ocInjectAll') && $('ocInjectAll').checked && inject
-  const ctx = Object.assign({}, pickedCtx, inject ? { injectText: inject } : {})
+  const injectAll = injectEnabled && $('ocInjectAll') && $('ocInjectAll').checked && inject
+  const ctx = Object.assign({}, pickedCtx, (injectEnabled && inject) ? { injectText: inject, enableInject: true } : {})
   if ($('ocBatch') && $('ocBatch').checked && window.__msgs && pickedCtx && pickedCtx.authorId) {
     // 카카오 앱 공식 UI 제한: 한 요청에 chatLogInfos 최대 5개. primary 1 + extra 4 까지.
     // 서버도 같은 bound 를 체크할 가능성 높음 — 초과하면 전체 요청 거부 위험.
@@ -664,8 +671,8 @@ async function ocMessageVerdict() {
   if (!inject) { $('out').textContent = '📝 신고 본문 조작 섹션에 문장을 넣어야 테스트 됨 (조작 ↔ 원문 비교가 목적)'; return }
   const fakeLogId = '1'  // 존재할 리 없는 작은 수 — 실제 카카오 logId 는 10^18 대
   const cases = [
-    { tag: '(a) 실제logId + 조작문장', ctx: Object.assign({}, pickedCtx, { injectText: inject }) },
-    { tag: '(b) 가짜logId(1) + 조작문장', ctx: Object.assign({}, pickedCtx, { logIdOverride: fakeLogId, injectText: inject }) },
+    { tag: '(a) 실제logId + 조작문장', ctx: Object.assign({}, pickedCtx, { injectText: inject, enableInject: true }) },
+    { tag: '(b) 가짜logId(1) + 조작문장', ctx: Object.assign({}, pickedCtx, { logIdOverride: fakeLogId, injectText: inject, enableInject: true }) },
     { tag: '(c) 실제logId + 실제원문 (비교군)', ctx: Object.assign({}, pickedCtx) },
   ]
   const lines = ['category=' + category + ' · l=' + pickedCtx.logId + ' · 조작="' + inject.slice(0, 40) + '"', '']

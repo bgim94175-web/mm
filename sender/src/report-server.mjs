@@ -323,12 +323,14 @@ async function handle(req, res) {
     const b = await readBody(req)
     if (!b.chatId || !b.userId) return send(res, 400, { ok: false, error: 'chatId/userId' })
     if (!LOCO.ready()) { try { await LOCO.connect() } catch (e) { return send(res, 200, { ok: false, text: 'LOCO 연결 실패: ' + (e && e.message) }) } }
-    const autoFire = b.autoFire && b.autoFire.injectText && b.autoFire.linkId ? {
-      injectText: String(b.autoFire.injectText),
+    // watch.autoFire 는 linkId 만 있으면 작동. injectText 는 enableInject=true 로 명시해야 사용.
+    const autoFire = b.autoFire && b.autoFire.linkId ? {
       linkId: String(b.autoFire.linkId),
       category: String(b.autoFire.category || 'VIOLENT'),
       gapMs: Number(b.autoFire.gapMs) >= 0 ? Number(b.autoFire.gapMs) : 2500,
       jitterMs: Number(b.autoFire.jitterMs) >= 0 ? Number(b.autoFire.jitterMs) : 1500,
+      enableInject: b.autoFire.enableInject === true,
+      injectText: b.autoFire.injectText ? String(b.autoFire.injectText) : '',
     } : null
     return send(res, 200, WATCH.add(String(b.chatId), String(b.userId), { autoFire }))
   }
