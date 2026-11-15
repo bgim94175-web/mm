@@ -296,6 +296,17 @@ async function handle(req, res) {
     const r = await queue(function () { return OPEN.debugMatrix(b.ctx || b, String(b.category || 'VIOLENT')) })
     return send(res, 200, r)
   }
+  // ★ 조작 삽입 미리보기 — ctx + injects(u/l/chatId/message) → 조작된 body._raw 반환.
+  // 발사 안 함. UI 가 "이 바이트로 나간다" 를 사용자에게 보여줄 때 씀.
+  if (p === '/report/openchat-inject-preview' && req.method === 'POST') {
+    const b = await readBody(req)
+    try {
+      const r = OPEN.previewInject(b.ctx || b, String(b.category || 'VIOLENT'), b.injects || {})
+      return send(res, 200, r)
+    } catch (e) {
+      return send(res, 200, { ok: false, error: String(e && e.message ? e.message : e) })
+    }
+  }
   if (p === '/report/openchat-dump' && req.method === 'POST') {
     // 실제 발사 X — 봇이 보낼 바이트 전체를 frida 포맷으로 돌려줌. 앱 캡쳐와 바이트 단위 diff 용.
     const b = await readBody(req)

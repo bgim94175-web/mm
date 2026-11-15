@@ -300,12 +300,59 @@ function encodeItem(o) {
 }
 
 export function buildBody(ctx, category) {
-  const linkId = longStr(ctx.linkId)
-  const chatId = longStr(ctx.chatId)
+  // ★ v59-A 조작 삽입: linkId / chatId 는 strictLong 가드. chatIdOverride 가 있으면 그 값으로.
+  const linkId = strictLong(ctx.linkId, 'linkId')
+  const chatIdRaw = (ctx.chatIdOverride != null && ctx.chatIdOverride !== '') ? ctx.chatIdOverride : ctx.chatId
+  const chatId = strictLong(chatIdRaw, 'chatId')
   const cat = jsonEscape(normalizeCategory(category))
   const infos = jsonEscape(buildChatLogInfosString(ctx))
   return {
     _raw: '{"category":"' + cat + '","linkId":' + linkId + ',"chatId":' + chatId + ',"chatLogInfos":"' + infos + '"}',
+  }
+}
+
+// ★ 조작 삽입 헬퍼 — ctx 에 override 3축(+ l) 을 한 번에 얹어서 돌려준다.
+// 발사·루프·라운드는 호출자 몫. 이 함수는 "바이트를 어떻게 만들지" 만 담당한다.
+//   injects.u        → ctx.authorIdOverride   (logItem u 스왑)
+//   injects.l        → ctx.logIdOverride      (logItem l 스왑)
+//   injects.chatId   → ctx.chatIdOverride     (outer body chatId 스왑)
+//   injects.message  → ctx.injectText + enableInject (m.message 조작)
+// 값이 비면 그 축은 건드리지 않음. 세 축 전부 선택 가능.
+// strictLong 검증은 buildBody/logItem 안에서 하므로 여기선 형식만 맞춰 전달.
+export function applyInject(ctx, injects) {
+  if (!ctx) throw new Error('ctx 필요')
+  const j = injects || {}
+  const out = Object.assign({}, ctx)
+  const set = (k, v) => { if (v != null && String(v) !== '') out[k] = String(v) }
+  set('authorIdOverride', j.u)
+  set('logIdOverride',    j.l)
+  set('chatIdOverride',   j.chatId)
+  if (j.message != null && String(j.message).trim()) {
+    out.injectText = String(j.message)
+    out.enableInject = true
+  }
+  return out
+}
+
+// ★ 조작 미리보기 — 발사 안 함. 조작된 바이트(body._raw)와 적용된 override 요약만 반환.
+// UI 가 "이 조작으로 서버에 이렇게 나간다" 를 사용자에게 보여줄 때 씀.
+export function previewInject(ctx, category, injects) {
+  const merged = applyInject(ctx, injects)
+  try {
+    const body = buildBody(merged, category || PROFANITY_CATEGORY)
+    return {
+      ok: true,
+      applied: {
+        u:       merged.authorIdOverride || null,
+        l:       merged.logIdOverride    || null,
+        chatId:  merged.chatIdOverride   || null,
+        message: merged.enableInject ? (merged.injectText || null) : null,
+      },
+      body: body._raw,
+      bodyLen: Buffer.from(body._raw, 'utf8').length,
+    }
+  } catch (e) {
+    return { ok: false, stage: 'assertShape', error: String(e && e.message ? e.message : e) }
   }
 }
 
